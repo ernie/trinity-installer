@@ -8,7 +8,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/ernie/trinity-installer/assets/grid"
@@ -53,11 +52,7 @@ func (u *ui) showPC() {
 	u.pcFolder.SetText(u.pc.InstallDir)
 	validate(u.pcFolder.Text)
 	choose := widget.NewButton("Choose...", func() {
-		dialog.ShowFolderOpen(func(uri fyne.ListableURI, err error) {
-			if err == nil && uri != nil {
-				u.pcFolder.SetText(filepath.Clean(uri.Path()))
-			}
-		}, u.win)
+		u.pickFolder(u.pcFolder.Text, func(dir string) { u.pcFolder.SetText(dir) })
 	})
 	menu := "Add to Start Menu"
 	if u.goos == "linux" {

@@ -40,20 +40,21 @@ type ui struct {
 	logMu   sync.Mutex
 	goos    string
 
-	headsets   []frame.Headset
-	headset    frame.Headset
-	signer     ssh.Signer
-	pubLine    string
-	quake3Dir  string
-	validation quake3.Validation
-	carry      *install.Carry
-	target     target.Target
-	plan       []target.Step
-	pc         local.Options
-	device     adb.Device
-	devices    []adb.Device
-	adb        *adb.ADB
-	patchSet   *patch.Set
+	headsets     []frame.Headset
+	headset      frame.Headset
+	signer       ssh.Signer
+	pubLine      string
+	quake3Dir    string
+	quake3Folder *widget.Entry
+	validation   quake3.Validation
+	carry        *install.Carry
+	target       target.Target
+	plan         []target.Step
+	pc           local.Options
+	device       adb.Device
+	devices      []adb.Device
+	adb          *adb.ADB
+	patchSet     *patch.Set
 	// eulaAccepted keeps the license accepted when the user comes back to its screen.
 	eulaAccepted bool
 

@@ -875,9 +875,10 @@ func TestQuake3ScreenCaptionsAndShortensThePath(t *testing.T) {
 	if !strings.Contains(joined, "retail copy of Quake III Arena") {
 		t.Fatalf("no caption: %q", joined)
 	}
-	if !strings.Contains(joined, "…") || strings.Contains(joined, ui.quake3Dir) {
-		t.Fatalf("long path not shortened in the middle: %q", joined)
+	if ui.quake3Folder.Text != ui.quake3Dir {
+		t.Fatalf("folder entry %q, want %q", ui.quake3Folder.Text, ui.quake3Dir)
 	}
+	_ = joined
 }
 
 func allWidgets(o fyne.CanvasObject) []fyne.CanvasObject {
@@ -970,5 +971,57 @@ func TestPCScreenPrefillsTheExistingInstall(t *testing.T) {
 	}
 	if !seen {
 		t.Fatal("no update note")
+	}
+}
+
+func TestQuake3TypedFolderUpdatesTheState(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	ui := newUI(a, a.NewWindow("t"), t.TempDir())
+	t.Cleanup(func() { ui.logFile.Close() })
+	ui.target = local.New(local.Options{GOOS: "windows", InstallDir: t.TempDir(), PaksDir: t.TempDir()})
+	ui.quake3Dir = t.TempDir()
+	ui.showQuake3()
+	if !ui.quake3Next.Disabled() || ui.baseq3Line.Text != "baseq3: NOT PRESENT" {
+		t.Fatalf("empty folder: next enabled=%v %q", !ui.quake3Next.Disabled(), ui.baseq3Line.Text)
+	}
+	ui.quake3Folder.SetText(quake3Folder(t, true))
+	if ui.quake3Next.Disabled() || ui.baseq3Line.Text != "baseq3: OK" {
+		t.Fatalf("typed folder: %q %q", ui.baseq3Line.Text, ui.missionpackLine.Text)
+	}
+	ui.quake3Folder.SetText("")
+	if !ui.quake3Next.Disabled() || ui.baseq3Line.Text != "" {
+		t.Fatalf("cleared folder: %q", ui.baseq3Line.Text)
+	}
+}
+
+func TestChooseUsesTheNativeFolderPicker(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	ui := newUI(a, a.NewWindow("t"), t.TempDir())
+	t.Cleanup(func() { ui.logFile.Close() })
+	ui.target = local.New(local.Options{GOOS: "windows", InstallDir: t.TempDir(), PaksDir: t.TempDir()})
+	want := quake3Folder(t, true)
+	old := nativeFolder
+	var started string
+	nativeFolder = func(start string) (string, error) { started = start; return want + string(filepath.Separator), nil }
+	defer func() { nativeFolder = old }()
+	done := make(chan struct{})
+	ui.pickFolder("C:\\start", func(dir string) {
+		if dir != want {
+			t.Errorf("picked %q, want %q", dir, want)
+		}
+		close(done)
+	})
+	<-done
+	if started != "C:\\start" {
+		t.Fatalf("picker started at %q", started)
+	}
+	nativeFolder = func(string) (string, error) { return "", zenityCanceled }
+	called := false
+	ui.pickFolder("", func(string) { called = true })
+	time.Sleep(50 * time.Millisecond)
+	if called {
+		t.Fatal("a canceled picker still chose a folder")
 	}
 }

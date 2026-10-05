@@ -11,7 +11,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/ernie/trinity-installer/internal/frame"
@@ -173,40 +172,40 @@ func (u *ui) showQuake3() {
 	u.renderValidation()
 }
 
-// renderValidation (re)builds the Quake III screen from u.quake3Dir; the Re-check button and the folder chooser return here.
+// renderValidation builds the Quake III screen from u.quake3Dir; the folder entry and chooser update its state lines in place.
 func (u *ui) renderValidation() {
-	u.quake3Next.Disable()
-	label := "Choose retail Quake III Arena folder"
-	if u.quake3Dir != "" {
-		label = ellipsizeMiddle(u.quake3Dir, u.buttonTextWidth(), fyne.TextStyle{Bold: true})
-	}
-	pick := widget.NewButton(label, func() {
-		dialog.ShowFolderOpen(func(uri fyne.ListableURI, err error) {
-			if err == nil && uri != nil {
-				u.quake3Dir = uri.Path()
-				u.renderValidation()
-			}
-		}, u.win)
-	})
-	u.baseq3Line, u.missionpackLine = nil, nil
 	caption := widget.NewLabel("Where is your retail copy of Quake III Arena? No files will be changed there. Trinity copies your pk3 files to its own install.")
 	caption.Wrapping = fyne.TextWrapWord
-	body := []fyne.CanvasObject{caption, pick}
-	if u.quake3Dir != "" {
-		v, err := quake3.Validate(u.quake3Dir)
-		if err != nil {
-			v = quake3.Validation{}
+	u.baseq3Line = widget.NewLabel("")
+	u.missionpackLine = widget.NewLabel("")
+	apply := func(dir string) {
+		u.quake3Dir = strings.TrimSpace(dir)
+		u.quake3Next.Disable()
+		u.validation = quake3.Validation{}
+		if u.quake3Dir == "" {
+			u.baseq3Line.SetText("")
+			u.missionpackLine.SetText("")
+			return
 		}
-		u.validation = v
-		u.baseq3Line = widget.NewLabel("baseq3: " + v.Baseq3.State())
-		u.missionpackLine = widget.NewLabel("missionpack: " + v.Missionpack.State())
-		body = append(body, u.baseq3Line, u.missionpackLine)
-		if v.Ready() {
+		if v, err := quake3.Validate(u.quake3Dir); err == nil {
+			u.validation = v
+		}
+		u.baseq3Line.SetText("baseq3: " + u.validation.Baseq3.State())
+		u.missionpackLine.SetText("missionpack: " + u.validation.Missionpack.State())
+		if u.validation.Ready() {
 			u.quake3Next.Enable()
 		}
 	}
+	u.quake3Folder = widget.NewEntry()
+	u.quake3Folder.OnChanged = apply
+	u.quake3Folder.SetText(u.quake3Dir)
+	apply(u.quake3Dir)
+	choose := widget.NewButton("Choose...", func() {
+		u.pickFolder(u.quake3Folder.Text, func(dir string) { u.quake3Folder.SetText(dir) })
+	})
+	body := container.NewVBox(caption, container.NewBorder(nil, nil, nil, choose, u.quake3Folder), u.baseq3Line, u.missionpackLine)
 	back := widget.NewButton("Back", func() { u.backFromQuake3() })
-	u.show(container.NewBorder(nil, buttonRow(back, u.quake3Next), nil, nil, container.NewVBox(body...)))
+	u.show(container.NewBorder(nil, buttonRow(back, u.quake3Next), nil, nil, body))
 }
 
 func (u *ui) backFromQuake3() {
