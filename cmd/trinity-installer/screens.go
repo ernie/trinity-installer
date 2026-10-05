@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"net/url"
 	"strings"
 	"time"
 
@@ -16,8 +15,6 @@ import (
 	"github.com/ernie/trinity-installer/internal/install"
 	"github.com/ernie/trinity-installer/internal/quake3"
 )
-
-const eulaURL = "https://trinity.run/quake3-eula"
 
 // runInstall is a variable so the screen test does not drive a headset.
 var runInstall = install.Run
@@ -139,39 +136,15 @@ func (u *ui) renderValidation() {
 			v = quake3.Validation{}
 		}
 		u.validation = v
-		u.baseq3Line = widget.NewLabel("baseq3: " + dirState(v.HasBaseq3, v.Baseq3Complete()))
-		u.missionpackLine = widget.NewLabel("missionpack: " + dirState(v.HasMissionpack, v.MissionpackComplete()))
+		u.baseq3Line = widget.NewLabel("baseq3: " + v.Baseq3.State())
+		u.missionpackLine = widget.NewLabel("missionpack: " + v.Missionpack.State())
 		body = append(body, u.baseq3Line, u.missionpackLine)
-		u.missionpack = v.HasMissionpack && v.MissionpackComplete()
-		if v.Baseq3Complete() {
+		if v.Ready() {
 			u.quake3Next.Enable()
-		}
-		if (v.HasBaseq3 && !v.Baseq3Complete()) || (v.HasMissionpack && !v.MissionpackComplete()) {
-			how := widget.NewLabel("Download the 1.32 patch and unzip it to the above directory, then click \"Re-check\".")
-			how.Wrapping = fyne.TextWrapWord
-			body = append(body, how, u.eulaButton())
 		}
 	}
 	back := widget.NewButton("Back", func() { u.showHeadset() })
 	u.show(container.NewBorder(nil, container.NewHBox(back, u.quake3Next), nil, nil, container.NewVBox(body...)))
-}
-
-func dirState(present, complete bool) string {
-	switch {
-	case !present:
-		return "NOT PRESENT"
-	case !complete:
-		return "NEEDS PATCH"
-	}
-	return "OK"
-}
-
-func (u *ui) eulaButton() fyne.CanvasObject {
-	get := widget.NewButton("Download 1.32 Patch", func() {
-		link, _ := url.Parse(eulaURL)
-		u.app.OpenURL(link)
-	})
-	return container.NewHBox(get, widget.NewButton("Re-check", func() { u.renderValidation() }))
 }
 
 func (u *ui) showInstall() {

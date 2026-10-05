@@ -44,3 +44,5 @@ func parseLibraryFolders(r io.Reader) []string {
 	}
 	return paths
 }
+
+func SteamRoots() []string { return steamRoots() }

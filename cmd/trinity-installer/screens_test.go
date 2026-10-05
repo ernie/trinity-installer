@@ -33,7 +33,6 @@ func TestScreensBuild(t *testing.T) {
 	ui.quake3Dir = q3
 	ui.showHeadset()
 	ui.showQuake3()
-	ui.validation = quake3.Validation{HasBaseq3: true, MissingBaseq3: []string{"pak3.pk3"}}
 	ui.renderValidation()
 	ui.showInstall()
 	ui.showDone()
@@ -84,8 +83,8 @@ func TestNextTracksCurrentFolder(t *testing.T) {
 	}
 	ui.quake3Dir = quake3Folder(t, false)
 	ui.renderValidation()
-	if !ui.quake3Next.Disabled() {
-		t.Fatal("Next enabled with missing patch paks")
+	if ui.quake3Next.Disabled() {
+		t.Fatal("Next disabled when only patch paks are missing; the install downloads them")
 	}
 	ui.quake3Dir = quake3Folder(t, true)
 	ui.renderValidation()

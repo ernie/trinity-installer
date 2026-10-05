@@ -31,15 +31,14 @@ type ui struct {
 	logFile *os.File
 	logMu   sync.Mutex
 
-	headsets    []frame.Headset
-	headset     frame.Headset
-	signer      ssh.Signer
-	pubLine     string
-	sess        frame.Session
-	quake3Dir   string
-	validation  quake3.Validation
-	missionpack bool
-	carry       *install.Carry
+	headsets   []frame.Headset
+	headset    frame.Headset
+	signer     ssh.Signer
+	pubLine    string
+	sess       frame.Session
+	quake3Dir  string
+	validation quake3.Validation
+	carry      *install.Carry
 
 	// widgets other screens or tests reach into
 	quake3Next                  *widget.Button
@@ -168,7 +167,7 @@ func (u *ui) installOptions() install.Options {
 			})
 		},
 		Carry: u.carry,
-		Paks:  u.validation.Selected(u.missionpack),
+		Paks:  u.validation.LocalPaks(),
 		Art:   grid.Art(),
 	}
 }

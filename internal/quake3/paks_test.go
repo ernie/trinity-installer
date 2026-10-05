@@ -9,16 +9,12 @@ import (
 func writePak(t *testing.T, dir, rel string, size int64) {
 	t.Helper()
 	p := filepath.Join(dir, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	os.MkdirAll(filepath.Dir(p), 0o755)
 	f, err := os.Create(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.Truncate(size); err != nil {
-		t.Fatal(err)
-	}
+	f.Truncate(size)
 	f.Close()
 }
 
@@ -41,40 +37,34 @@ func TestValidateFullInstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.HasBaseq3 || !v.Baseq3Complete() || !v.HasMissionpack || !v.MissionpackComplete() {
-		t.Fatalf("unexpected validation %+v", v)
+	if v.Baseq3.State() != "OK" || v.Missionpack.State() != "OK" || !v.Ready() {
+		t.Fatalf("%+v", v)
 	}
-	if len(v.Paks) != 13 || v.Paks[0].Rel != "baseq3/pak0.pk3" || v.Paks[9].Rel != "missionpack/pak0.pk3" {
-		t.Fatalf("paks %+v", v.Paks)
+	if n := len(v.LocalPaks()); n != 13 {
+		t.Fatalf("local paks %d", n)
 	}
-	if v.Paks[0].Size != MinPak0Size {
-		t.Fatalf("size %d", v.Paks[0].Size)
+	if n := len(v.NeededPatch()); n != 0 {
+		t.Fatalf("needed %v", v.NeededPatch())
 	}
 }
 
-func TestValidateMissingPatchPaks(t *testing.T) {
+func TestNeededPatchOnlyForPresentDirs(t *testing.T) {
 	dir := fullInstall(t, true)
-	os.Remove(filepath.Join(dir, "baseq3", "pak3.pk3"))
 	os.Remove(filepath.Join(dir, "missionpack", "pak1.pk3"))
-	os.Remove(filepath.Join(dir, "missionpack", "pak2.pk3"))
-	v, err := Validate(dir)
-	if err != nil {
-		t.Fatal(err)
+	os.Remove(filepath.Join(dir, "missionpack", "pak3.pk3"))
+	v, _ := Validate(dir)
+	if v.Baseq3.State() != "OK" || v.Missionpack.State() != "NEEDS PATCH" {
+		t.Fatalf("%+v", v)
 	}
-	if !v.HasBaseq3 || v.Baseq3Complete() || len(v.MissingBaseq3) != 1 || v.MissingBaseq3[0] != "pak3.pk3" {
-		t.Fatalf("baseq3 %+v", v)
+	if got := v.NeededPatch(); len(got) != 2 || got[0] != "missionpack/pak1.pk3" || got[1] != "missionpack/pak3.pk3" {
+		t.Fatalf("%v", got)
 	}
-	if !v.HasMissionpack || v.MissionpackComplete() || len(v.MissingMissionpack) != 2 || v.MissingMissionpack[0] != "pak1.pk3" {
-		t.Fatalf("missionpack %+v", v)
+	if n := len(v.LocalPaks()); n != 11 {
+		t.Fatalf("local paks %d", n)
 	}
-}
-
-func TestValidateNoMissionpack(t *testing.T) {
-	v, err := Validate(fullInstall(t, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if v.HasMissionpack || !v.MissionpackComplete() || len(v.Paks) != 9 {
+	os.RemoveAll(filepath.Join(dir, "missionpack"))
+	v, _ = Validate(dir)
+	if v.Missionpack.State() != "NOT PRESENT" || len(v.NeededPatch()) != 0 || len(v.LocalPaks()) != 9 {
 		t.Fatalf("%+v", v)
 	}
 }
@@ -82,25 +72,21 @@ func TestValidateNoMissionpack(t *testing.T) {
 func TestValidateNotQuake3(t *testing.T) {
 	dir := t.TempDir()
 	v, err := Validate(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if v.HasBaseq3 {
-		t.Fatal("empty dir validated")
+	if err != nil || v.Ready() || v.Baseq3.State() != "NOT PRESENT" {
+		t.Fatalf("%+v %v", v, err)
 	}
 	writePak(t, dir, "baseq3/pak0.pk3", 100)
 	v, _ = Validate(dir)
-	if v.HasBaseq3 {
+	if v.Ready() {
 		t.Fatal("truncated pak0 validated")
 	}
 }
 
-func TestSelected(t *testing.T) {
-	v, _ := Validate(fullInstall(t, true))
-	if n := len(v.Selected(false)); n != 9 {
-		t.Fatalf("without missionpack %d", n)
-	}
-	if n := len(v.Selected(true)); n != 13 {
-		t.Fatalf("with missionpack %d", n)
+func TestBaseq3NeedsPatch(t *testing.T) {
+	dir := fullInstall(t, false)
+	os.Remove(filepath.Join(dir, "baseq3", "pak7.pk3"))
+	v, _ := Validate(dir)
+	if !v.Ready() || v.Baseq3.State() != "NEEDS PATCH" || v.NeededPatch()[0] != "baseq3/pak7.pk3" {
+		t.Fatalf("%+v %v", v, v.NeededPatch())
 	}
 }

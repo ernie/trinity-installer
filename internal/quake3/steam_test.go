@@ -53,3 +53,10 @@ func TestFindQuake3(t *testing.T) {
 		t.Fatal("found quake3 in an empty root")
 	}
 }
+
+func TestSteamRootsExported(t *testing.T) {
+	a, b := SteamRoots(), steamRoots()
+	if strings.Join(a, "|") != strings.Join(b, "|") {
+		t.Fatalf("%v != %v", a, b)
+	}
+}
