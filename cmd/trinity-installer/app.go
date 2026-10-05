@@ -154,7 +154,7 @@ func (u *ui) installOptions() install.Options {
 		GameID: "Trinity",
 		Fetch: func(ctx context.Context, log func(string)) ([]byte, error) {
 			client := &http.Client{Timeout: 10 * time.Minute}
-			a, err := release.Latest(ctx, client, release.DefaultAPI)
+			a, err := release.Latest(ctx, client, release.DefaultAPI, release.AssetName)
 			if err != nil {
 				return nil, err
 			}

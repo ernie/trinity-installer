@@ -10,7 +10,7 @@ import (
 	"net/http"
 )
 
-const DefaultAPI = "https://api.github.com/repos/ernie/trinity-engine/releases/latest"
+const DefaultAPI = EngineAPI
 const AssetName = "trinity-frame-arm64.zip"
 
 type Asset struct {
@@ -20,7 +20,7 @@ type Asset struct {
 	URL  string
 }
 
-func Latest(ctx context.Context, client *http.Client, api string) (Asset, error) {
+func Latest(ctx context.Context, client *http.Client, api, asset string) (Asset, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api, nil)
 	if err != nil {
 		return Asset{}, err
@@ -46,11 +46,11 @@ func Latest(ctx context.Context, client *http.Client, api string) (Asset, error)
 		return Asset{}, err
 	}
 	for _, a := range body.Assets {
-		if a.Name == AssetName {
+		if a.Name == asset {
 			return Asset{Tag: body.Tag, Name: a.Name, Size: a.Size, URL: a.URL}, nil
 		}
 	}
-	return Asset{}, fmt.Errorf("release %s has no %s", body.Tag, AssetName)
+	return Asset{}, fmt.Errorf("release %s has no %s", body.Tag, asset)
 }
 
 func Download(ctx context.Context, client *http.Client, a Asset, progress func(done int64)) ([]byte, error) {

@@ -34,7 +34,7 @@ func server(t *testing.T, body []byte) *httptest.Server {
 func TestLatestPicksFrameAsset(t *testing.T) {
 	body := fakeZip(t)
 	srv := server(t, body)
-	a, err := Latest(context.Background(), srv.Client(), srv.URL+"/latest")
+	a, err := Latest(context.Background(), srv.Client(), srv.URL+"/latest", AssetName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestLatestPicksFrameAsset(t *testing.T) {
 func TestDownloadChecksSizeAndOpens(t *testing.T) {
 	body := fakeZip(t)
 	srv := server(t, body)
-	a, _ := Latest(context.Background(), srv.Client(), srv.URL+"/latest")
+	a, _ := Latest(context.Background(), srv.Client(), srv.URL+"/latest", AssetName)
 	var seen int64
 	b, err := Download(context.Background(), srv.Client(), a, func(done int64) { seen = done })
 	if err != nil || seen != int64(len(body)) {
@@ -67,7 +67,7 @@ func TestLatestWithoutFrameAsset(t *testing.T) {
 		fmt.Fprint(w, `{"tag_name":"v1","assets":[]}`)
 	}))
 	defer srv.Close()
-	if _, err := Latest(context.Background(), srv.Client(), srv.URL); err == nil {
+	if _, err := Latest(context.Background(), srv.Client(), srv.URL, AssetName); err == nil {
 		t.Fatal("missing asset accepted")
 	}
 }
