@@ -178,7 +178,7 @@ func (u *ui) renderValidation() {
 	u.quake3Next.Disable()
 	label := "Choose retail Quake III Arena folder"
 	if u.quake3Dir != "" {
-		label = u.quake3Dir
+		label = ellipsizeMiddle(u.quake3Dir, u.buttonTextWidth(), fyne.TextStyle{Bold: true})
 	}
 	pick := widget.NewButton(label, func() {
 		dialog.ShowFolderOpen(func(uri fyne.ListableURI, err error) {
@@ -189,7 +189,9 @@ func (u *ui) renderValidation() {
 		}, u.win)
 	})
 	u.baseq3Line, u.missionpackLine = nil, nil
-	body := []fyne.CanvasObject{pick}
+	caption := widget.NewLabel("Where is your retail copy of Quake III Arena? No files will be changed there. Trinity copies your pk3 files to its own install.")
+	caption.Wrapping = fyne.TextWrapWord
+	body := []fyne.CanvasObject{caption, pick}
 	if u.quake3Dir != "" {
 		v, err := quake3.Validate(u.quake3Dir)
 		if err != nil {
@@ -270,7 +272,9 @@ func (u *ui) showInstall() {
 	}
 	// One label for all steps keeps them single spaced, so nine rows and the log fit the window.
 	u.rowsView = widget.NewLabel(strings.Join(u.rows, "\n"))
-	rows := u.rowsView
+	caption := widget.NewLabel("Installing Trinity to " + u.target.Name() + ":")
+	caption.Wrapping = fyne.TextWrapWord
+	rows := container.NewVBox(caption, u.rowsView)
 	u.logView = widget.NewMultiLineEntry()
 	u.logView.Wrapping = fyne.TextWrapBreak
 	retry := widget.NewButton("Retry", nil)

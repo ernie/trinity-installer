@@ -15,6 +15,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/widget"
 	"github.com/ernie/trinity-installer/internal/adb"
 	"github.com/ernie/trinity-installer/internal/frame"
 	"github.com/ernie/trinity-installer/internal/install"
@@ -849,4 +850,42 @@ func TestPCNextStartsDisabledWithoutAFolder(t *testing.T) {
 	if !ui.pcNext.Disabled() {
 		t.Fatalf("Next enabled for %q", ui.pcFolder.Text)
 	}
+}
+
+func TestQuake3ScreenCaptionsAndShortensThePath(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	ui := newUI(a, a.NewWindow("t"), t.TempDir())
+	t.Cleanup(func() { ui.logFile.Close() })
+	ui.target = local.New(local.Options{GOOS: "windows", InstallDir: t.TempDir(), PaksDir: t.TempDir()})
+	ui.quake3Dir = filepath.Join(t.TempDir(), strings.Repeat("Quake3Arena", 8))
+	ui.showQuake3()
+	var texts []string
+	for _, o := range ui.content.Objects {
+		for _, w := range allWidgets(o) {
+			switch v := w.(type) {
+			case *widget.Label:
+				texts = append(texts, v.Text)
+			case *widget.Button:
+				texts = append(texts, v.Text)
+			}
+		}
+	}
+	joined := strings.Join(texts, "|")
+	if !strings.Contains(joined, "retail copy of Quake III Arena") {
+		t.Fatalf("no caption: %q", joined)
+	}
+	if !strings.Contains(joined, "…") || strings.Contains(joined, ui.quake3Dir) {
+		t.Fatalf("long path not shortened in the middle: %q", joined)
+	}
+}
+
+func allWidgets(o fyne.CanvasObject) []fyne.CanvasObject {
+	out := []fyne.CanvasObject{o}
+	if c, ok := o.(*fyne.Container); ok {
+		for _, child := range c.Objects {
+			out = append(out, allWidgets(child)...)
+		}
+	}
+	return out
 }
