@@ -16,14 +16,18 @@ import (
 
 // installed is a Windows install made by the target's own hooks, with Steam, SteamVR, a Start Menu shortcut and files the user added.
 type installed struct {
-	dir, steamRoot, user, cfg, lnk, settings, other string
-	userFiles                                       []string
-	appID                                           uint32
-	reg                                             *fakeRegistry
+	dir, steamRoot, user, cfg, lnk, desktop, settings, other string
+	userFiles                                                []string
+	appID                                                    uint32
+	reg                                                      *fakeRegistry
 }
 
-func installForUninstall(t *testing.T) installed {
-	stubCommands(t)
+func installForUninstall(t *testing.T) installed { return installForUninstallOn(t, "Desktop") }
+
+// installForUninstallOn installs with the user's Desktop in a folder of that name, as a localized Windows names it.
+func installForUninstallOn(t *testing.T, desktopName string) installed {
+	desktop := filepath.Join(t.TempDir(), desktopName)
+	stubShell(t, desktop)
 	fakeSelf(t, "installer")
 	roaming := t.TempDir()
 	t.Setenv("APPDATA", roaming)
@@ -39,7 +43,7 @@ func installForUninstall(t *testing.T) installed {
 	in.cfg = filepath.Join(in.steamRoot, "config", "appconfig.json")
 	os.MkdirAll(filepath.Dir(in.cfg), 0o755)
 	os.WriteFile(in.cfg, []byte(`{"manifest_paths":["C:\\other.vrmanifest"],"other_key":7}`), 0o644)
-	tg := New(Options{GOOS: "windows", InstallDir: in.dir, PaksDir: in.dir, AddToSteam: true, SteamRoot: in.steamRoot, SteamUser: in.user, SteamVRRoot: t.TempDir()})
+	tg := New(Options{GOOS: "windows", InstallDir: in.dir, PaksDir: in.dir, AddToSteam: true, SteamRoot: in.steamRoot, SteamUser: in.user, SteamVRRoot: t.TempDir(), StartMenu: true, Desktop: true})
 	tg.registry = in.reg
 	tg.steamRunning = func() (bool, error) { return false, nil }
 	tg.steamVRRunning = func() (bool, error) { return false, nil }
@@ -56,6 +60,7 @@ func installForUninstall(t *testing.T) installed {
 		t.Fatal(err)
 	}
 	in.appID = tg.appID
+	in.desktop = filepath.Join(desktop, "Trinity.lnk")
 	art := map[string][]byte{"capsule": {1}, "wide": {2}, "hero": {3}, "logo": {4}, "icon": {5}}
 	if err := tg.InstallArtwork(ctx, in.appID, art, log); err != nil {
 		t.Fatal(err)
@@ -131,6 +136,9 @@ func TestUninstallRemovesEverythingItInstalled(t *testing.T) {
 	}
 	if exists(in.lnk) {
 		t.Fatal("Start Menu shortcut left")
+	}
+	if exists(in.desktop) {
+		t.Fatal("desktop shortcut left")
 	}
 	b, _ := os.ReadFile(filepath.Join(in.user, "config", "shortcuts.vdf"))
 	list, err := steam.ParseShortcuts(b)
@@ -491,5 +499,41 @@ func TestRemoveManifestKeepsOtherKeys(t *testing.T) {
 	b, _ := os.ReadFile(cfg)
 	if strings.Contains(string(b), "trinity") || !strings.Contains(string(b), `a.vrmanifest`) || !strings.Contains(string(b), `"y": 1`) {
 		t.Fatalf("%s", b)
+	}
+}
+
+func TestUninstallChecksTheRecordedDesktopPath(t *testing.T) {
+	for _, name := range []string{"notes.lnk", "Trinity.lnk"} {
+		in := installForUninstall(t)
+		parent := "Desktop"
+		if name == "Trinity.lnk" {
+			parent = "Documents"
+		}
+		decoy := filepath.Join(t.TempDir(), parent, name)
+		os.MkdirAll(filepath.Dir(decoy), 0o755)
+		os.WriteFile(decoy, []byte("d"), 0o644)
+		rec := readRecord(t, in.dir)
+		rec.Desktop = decoy
+		writeRecord(t, in.dir, rec)
+		u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+		_, log := u.runIn(in.dir, false)
+		if !exists(decoy) || !strings.Contains(log, decoy) {
+			t.Fatalf("%s removed or unlogged:\n%s", decoy, log)
+		}
+	}
+}
+
+func TestUninstallSkipsShortcutsTheRecordDoesNotName(t *testing.T) {
+	in := installForUninstall(t)
+	rec := readRecord(t, in.dir)
+	rec.StartMenu, rec.Desktop = "", ""
+	writeRecord(t, in.dir, rec)
+	u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+	if errs, _ := u.runIn(in.dir, false); len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	// The user unticked both boxes; a Trinity.lnk there is not the installer's.
+	if !exists(in.lnk) || !exists(in.desktop) {
+		t.Fatal("removed a shortcut the record does not name")
 	}
 }

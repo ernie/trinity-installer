@@ -28,6 +28,7 @@ type installRecord struct {
 	SteamUser         string   `json:"steamUser"`
 	AppID             uint32   `json:"appID"`
 	StartMenu         string   `json:"startMenu"`
+	Desktop           string   `json:"desktop"`
 }
 
 // loadRecord starts from an earlier install's record in the same folder, so a re-install keeps what that one wrote.
@@ -149,11 +150,8 @@ func (t *Target) registerUninstall(ctx context.Context, log func(string)) error 
 		log("no uninstall.exe, so no Settings > Apps entry")
 		return nil
 	}
-	programs, err := t.startMenu()
-	if err != nil {
-		return err
-	}
-	t.rec.StartMenu = filepath.Join(programs, "Trinity.lnk")
+	t.rec.StartMenu = keptShortcut(t.startMenuLnk, t.rec.StartMenu)
+	t.rec.Desktop = keptShortcut(t.desktopLnk, t.rec.Desktop)
 	// Without Steam this time, an earlier install's shortcut is still there to remove.
 	if t.steamShortcut() {
 		t.rec.SteamRoot, t.rec.SteamUser, t.rec.AppID = t.opts.SteamRoot, t.opts.SteamUser, t.appID
@@ -181,6 +179,17 @@ func (t *Target) registerUninstall(ctx context.Context, log func(string)) error 
 	}
 	log("uninstall entry written for Settings > Apps")
 	return nil
+}
+
+// keptShortcut is the shortcut this run wrote, else an earlier install's that is still there; an unticked box writes none.
+func keptShortcut(written, recorded string) string {
+	if written != "" {
+		return written
+	}
+	if _, err := os.Stat(recorded); recorded != "" && err == nil {
+		return recorded
+	}
+	return ""
 }
 
 // EstimatedSizeKB totals the recorded files under dir; files the installer did not write are not Trinity's size.
@@ -287,11 +296,25 @@ func (u *uninstaller) run(ctx context.Context, opts UninstallOptions, log func(s
 			fail("unlisting the SteamVR manifest", err)
 		}
 	}
-	if lnk := startMenuLink(rec.StartMenu, log); lnk != "" {
+	// Without a record the shortcut's usual place is the best guess; with one, an empty path means the box was unticked.
+	lnk := ""
+	if recErr != nil || rec.StartMenu != "" {
+		lnk = startMenuLink(rec.StartMenu, log)
+	}
+	if lnk != "" {
 		if err := os.Remove(lnk); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			fail("removing "+lnk, err)
 		} else {
 			log("Start Menu shortcut removed")
+		}
+	}
+	if rec.Desktop != "" {
+		if !isDesktopLink(ctx, rec.Desktop) {
+			log("ignoring the recorded Desktop path " + rec.Desktop)
+		} else if err := os.Remove(rec.Desktop); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			fail("removing "+rec.Desktop, err)
+		} else {
+			log("Desktop shortcut removed")
 		}
 	}
 	if recErr == nil {
@@ -460,6 +483,15 @@ func startMenuLink(recorded string, log func(string)) string {
 		return ""
 	}
 	return filepath.Join(roaming, "Microsoft", "Windows", "Start Menu", "Programs", "Trinity.lnk")
+}
+
+// isDesktopLink trusts a path only when it is Trinity.lnk in a folder named Desktop or in the Desktop the shell resolves now, which a localized Windows names differently.
+func isDesktopLink(ctx context.Context, p string) bool {
+	if !filepath.IsAbs(p) || !strings.EqualFold(filepath.Base(p), "Trinity.lnk") {
+		return false
+	}
+	parent := filepath.Dir(p)
+	return strings.EqualFold(filepath.Base(parent), "Desktop") || samePath(parent, shellDesktop(ctx))
 }
 
 func isSteamRoot(root string) bool {

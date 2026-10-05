@@ -22,11 +22,13 @@ Every target needs a retail Quake III Arena install with its pak0 files. If the 
 
 The PC install goes under a per-user folder: `%LOCALAPPDATA%\Trinity` on Windows, `~/.local/share/trinity` on Linux, and `~/Applications` plus `~/Library/Application Support/Trinity` on macOS.
 
+On Windows and Linux, the "Add to Start Menu" ("Add to applications menu" on Linux) and "Add to Desktop" boxes, both ticked by default, choose which launch shortcuts the installer creates.
+
 On Windows and Linux, when Steam (and SteamVR) is installed and the box is checked, the installer also writes a Steam shortcut (and registers Trinity with SteamVR). With several Steam users it adds the shortcut for the one who signed in last; when it cannot tell, the box stays off and says why. Close Steam while the shortcut is written; the entry shows after Steam restarts.
 
 ## Uninstalling
 
-On Windows, remove Trinity from Settings > Apps > Trinity. Close Trinity first, and Steam too if Trinity was added to it. The uninstaller removes the files it installed and the folders it created once they are empty (anything you added stays, along with its folder), the Start Menu and Steam entries, and, if you tick the box, your settings and downloads in `%APPDATA%\Trinity`. On Linux, delete the install folder and `~/.local/share/applications/trinity.desktop`. On macOS, drag Trinity.app to the Trash; its paks and settings are in `~/Library/Application Support/Trinity`.
+On Windows, remove Trinity from Settings > Apps > Trinity. Close Trinity first, and Steam too if Trinity was added to it. The uninstaller removes the files it installed and the folders it created once they are empty (anything you added stays, along with its folder), the Start Menu, Desktop and Steam entries, and, if you tick the box, your settings and downloads in `%APPDATA%\Trinity`. On Linux, delete the install folder, `~/.local/share/applications/trinity.desktop` and `~/Desktop/trinity.desktop`. On macOS, drag Trinity.app to the Trash; its paks and settings are in `~/Library/Application Support/Trinity`.
 
 ## Third-party software
 

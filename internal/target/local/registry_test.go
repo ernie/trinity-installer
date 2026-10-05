@@ -116,7 +116,7 @@ func TestUninstallEntryWritten(t *testing.T) {
 	t.Setenv("APPDATA", roaming)
 	install := filepath.Join(t.TempDir(), "Trinity")
 	reg := newFakeRegistry()
-	tg := New(Options{GOOS: "windows", InstallDir: install, PaksDir: install})
+	tg := New(Options{GOOS: "windows", InstallDir: install, PaksDir: install, StartMenu: true})
 	tg.registry = reg
 	ctx, log := context.Background(), func(string) {}
 	if _, err := tg.PrepareDestination(ctx, log); err != nil {

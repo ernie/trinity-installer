@@ -55,7 +55,7 @@ func TestApplicable(t *testing.T) {
 func TestLinuxDesktopEntry(t *testing.T) {
 	home := t.TempDir()
 	// A slash path, as on Linux; the host's own separators would be quoted as backslashes.
-	tg := New(Options{GOOS: "linux", InstallDir: "/home/me/trinity", PaksDir: "/home/me/trinity"})
+	tg := New(Options{GOOS: "linux", InstallDir: "/home/me/trinity", PaksDir: "/home/me/trinity", StartMenu: true})
 	tg.home = home
 	if err := tg.RegisterLaunchEntry(context.Background(), func(string) {}); err != nil {
 		t.Fatal(err)
@@ -91,7 +91,7 @@ func TestDesktopExecQuoting(t *testing.T) {
 
 func TestLaunchEntryIdempotent(t *testing.T) {
 	home := t.TempDir()
-	tg := New(Options{GOOS: "linux", InstallDir: filepath.Join(home, "trinity"), PaksDir: filepath.Join(home, "trinity")})
+	tg := New(Options{GOOS: "linux", InstallDir: filepath.Join(home, "trinity"), PaksDir: filepath.Join(home, "trinity"), StartMenu: true})
 	tg.home = home
 	os.MkdirAll(tg.opts.InstallDir, 0o755)
 	for i := 0; i < 2; i++ {
@@ -140,7 +140,7 @@ func TestWindowsShortcutCommand(t *testing.T) {
 	}
 	defer func() { runCommand = old }()
 	t.Setenv("APPDATA", `D:\Roaming`)
-	tg := New(Options{GOOS: "windows", InstallDir: `C:\Users\me\AppData\Local\Trinity`})
+	tg := New(Options{GOOS: "windows", InstallDir: `C:\Users\me\AppData\Local\Trinity`, StartMenu: true})
 	tg.home = `C:\Users\me`
 	if err := tg.RegisterLaunchEntry(context.Background(), func(string) {}); err != nil {
 		t.Fatal(err)
@@ -293,7 +293,7 @@ func TestSteamRunningBlocksShortcut(t *testing.T) {
 	os.MkdirAll(filepath.Dir(vdf), 0o755)
 	home := t.TempDir()
 	install := filepath.Join(home, "trinity")
-	tg := New(Options{GOOS: "linux", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot, SteamUser: filepath.Join(steamRoot, "userdata", "10005062")})
+	tg := New(Options{GOOS: "linux", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot, SteamUser: filepath.Join(steamRoot, "userdata", "10005062"), StartMenu: true})
 	tg.home = home
 	tg.steamRunning = func() (bool, error) { return true, nil }
 	err := tg.RegisterLaunchEntry(context.Background(), func(string) {})
@@ -549,5 +549,26 @@ func TestInstallDMGLogsAFailedDetach(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(lines, "\n"), "resource busy") {
 		t.Fatalf("a failed detach went unlogged: %q", lines)
+	}
+}
+
+func TestDoneSaysUpdatedOverAnExistingRecord(t *testing.T) {
+	dir := t.TempDir()
+	tg := New(Options{GOOS: "windows", InstallDir: dir, PaksDir: dir, StartMenu: true})
+	if _, err := tg.PrepareDestination(context.Background(), func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(tg.Done(), "Trinity is installed.") {
+		t.Fatalf("first install: %q", tg.Done())
+	}
+	if err := tg.saveRecord(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	again := New(Options{GOOS: "windows", InstallDir: dir, PaksDir: dir, StartMenu: true})
+	if _, err := again.PrepareDestination(context.Background(), func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(again.Done(), "Trinity is updated.") {
+		t.Fatalf("re-install: %q", again.Done())
 	}
 }

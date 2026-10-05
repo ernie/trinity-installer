@@ -29,6 +29,11 @@ func InstalledDir() (string, error) {
 	return dir, nil
 }
 
+// SetInstalledDirForTest records an install location in the test registry, as a finished install would.
+func SetInstalledDirForTest(dir string) error {
+	return defaultRegistry().SetString(uninstallKey, "InstallLocation", dir)
+}
+
 // SetRegistryForTest swaps in an in-memory registry, so tests in other packages never write the real HKEY_CURRENT_USER.
 func SetRegistryForTest() {
 	mem := &memRegistry{keys: map[string]map[string]any{}}

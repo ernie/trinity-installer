@@ -26,9 +26,13 @@ type Target struct {
 	appID          uint32
 	steamVRRunning func() (bool, error)
 	steamRunning   func() (bool, error)
-	registry       registryWriter
-	tag            string
-	rec            installRecord // what this install wrote, so the uninstaller removes exactly that
+	// updated is set when the destination already held an install record, so Done says so.
+	updated      bool
+	registry     registryWriter
+	tag          string
+	rec          installRecord // what this install wrote, so the uninstaller removes exactly that
+	startMenuLnk string        // the shortcuts this run wrote; "" when not asked for or not written
+	desktopLnk   string
 }
 
 func New(o Options) *Target {
@@ -75,7 +79,8 @@ func (t *Target) steamShortcut() bool {
 
 func (t *Target) Applicable(context.Context) ([]target.Step, error) {
 	steps := []target.Step{target.PushPatch}
-	if t.opts.GOOS != "darwin" {
+	// On Windows the step also writes the Settings > Apps entry, so it runs even with no shortcut asked for.
+	if t.opts.GOOS == "windows" || t.opts.GOOS == "linux" && (t.opts.StartMenu || t.opts.Desktop || t.steamShortcut()) {
 		steps = append(steps, target.RegisterLaunchEntry)
 	}
 	if t.steamShortcut() {
@@ -88,16 +93,34 @@ func (t *Target) Applicable(context.Context) ([]target.Step, error) {
 }
 
 func (t *Target) Done() string {
-	where := map[string]string{"windows": "the Start Menu", "darwin": "Applications", "linux": "your applications menu"}[t.opts.GOOS]
-	s := "Trinity is installed. Launch it from " + where
-	if t.steamShortcut() {
-		s += ", and from Steam the next time you start it"
+	state := "installed"
+	if t.updated {
+		state = "updated"
 	}
-	return s + "."
+	if t.opts.GOOS == "darwin" {
+		return "Trinity is " + state + ". Launch it from Applications."
+	}
+	var where []string
+	if t.opts.StartMenu {
+		where = append(where, map[string]string{"windows": "the Start Menu", "linux": "your applications menu"}[t.opts.GOOS])
+	}
+	if t.opts.Desktop {
+		where = append(where, "the Desktop")
+	}
+	switch {
+	case len(where) > 0 && t.steamShortcut():
+		return "Trinity is " + state + ". Launch it from " + strings.Join(where, " and ") + ", and from Steam the next time you start it."
+	case len(where) > 0:
+		return "Trinity is " + state + ". Launch it from " + strings.Join(where, " and ") + "."
+	case t.steamShortcut():
+		return "Trinity is " + state + ". Launch it from Steam the next time you start it."
+	}
+	return "Trinity is " + state + " in " + t.opts.InstallDir + "."
 }
 
 func (t *Target) PrepareDestination(ctx context.Context, log func(string)) (string, error) {
 	t.loadRecord()
+	t.updated = t.rec.InstallDir != ""
 	for i, d := range []string{t.opts.InstallDir, filepath.Join(t.opts.PaksDir, "baseq3"), filepath.Join(t.opts.PaksDir, "missionpack")} {
 		_, statErr := os.Stat(d)
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -196,9 +219,16 @@ func (t *Target) RegisterLaunchEntry(ctx context.Context, log func(string)) erro
 func (t *Target) registerDesktopEntry(ctx context.Context, log func(string)) error {
 	switch t.opts.GOOS {
 	case "windows":
-		return t.windowsShortcut(ctx, log)
+		if t.opts.StartMenu {
+			if err := t.windowsShortcut(ctx, log); err != nil {
+				return err
+			}
+		}
+		if t.opts.Desktop {
+			return t.windowsDesktopShortcut(ctx, log)
+		}
 	case "linux":
-		return t.desktopFile(log)
+		return t.desktopFiles(log)
 	}
 	return nil
 }

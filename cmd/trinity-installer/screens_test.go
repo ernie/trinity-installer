@@ -889,3 +889,86 @@ func allWidgets(o fyne.CanvasObject) []fyne.CanvasObject {
 	}
 	return out
 }
+
+func TestPCScreenEntryBoxes(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	ui := newUI(a, a.NewWindow("t"), t.TempDir())
+	t.Cleanup(func() { ui.logFile.Close() })
+	order := func() []string {
+		var got []string
+		for _, w := range allWidgets(ui.content) {
+			if c, ok := w.(*widget.Check); ok && c.Visible() {
+				got = append(got, c.Text)
+			}
+		}
+		return got
+	}
+	steamRoot := t.TempDir()
+	os.MkdirAll(filepath.Join(steamRoot, "userdata", "10005062"), 0o755)
+	for goos, want := range map[string]string{
+		"windows": "Add to Start Menu,Add to Desktop,Add to Steam",
+		"linux":   "Add to applications menu,Add to Desktop,Add to Steam",
+	} {
+		ui.goos = goos
+		dir := filepath.Join(t.TempDir(), "Trinity")
+		ui.pc = local.Defaults(goos, "amd64", t.TempDir(), t.TempDir())
+		ui.pc.InstallDir, ui.pc.PaksDir, ui.pc.SteamRoot, ui.pc.AddToSteam = dir, dir, steamRoot, true
+		ui.showPC()
+		if got := strings.Join(order(), ","); got != want {
+			t.Fatalf("%s: %s", goos, got)
+		}
+		if !ui.pcStartMenu.Checked || !ui.pcDesktop.Checked {
+			t.Fatalf("%s: the Start Menu and Desktop boxes must start ticked", goos)
+		}
+		ui.pcStartMenu.SetChecked(false)
+		ui.pcNext.OnTapped()
+		if ui.pc.StartMenu || !ui.pc.Desktop || !ui.pc.AddToSteam {
+			t.Fatalf("%s: %+v", goos, ui.pc)
+		}
+		ui.showPC()
+		if ui.pcStartMenu.Checked || !ui.pcDesktop.Checked {
+			t.Fatalf("%s: coming back lost the choices", goos)
+		}
+		ui.pcDesktop.SetChecked(false)
+		ui.pcNext.OnTapped()
+		if ui.pc.StartMenu || ui.pc.Desktop {
+			t.Fatalf("%s: %+v", goos, ui.pc)
+		}
+	}
+	ui.goos = "darwin"
+	ui.pc = local.Defaults("darwin", "arm64", "/Users/x", "")
+	ui.showPC()
+	if got := order(); len(got) != 0 {
+		t.Fatalf("the Mac shows %v", got)
+	}
+	ui.pcNext.OnTapped()
+	if ui.pc.StartMenu || ui.pc.Desktop {
+		t.Fatalf("%+v", ui.pc)
+	}
+}
+
+func TestPCScreenPrefillsTheExistingInstall(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	ui := newUI(a, a.NewWindow("t"), t.TempDir())
+	t.Cleanup(func() { ui.logFile.Close() })
+	ui.goos = "windows"
+	existing := filepath.Join(t.TempDir(), "Games", "Trinity")
+	if err := local.SetInstalledDirForTest(existing); err != nil {
+		t.Fatal(err)
+	}
+	ui.showPC()
+	if ui.pcFolder.Text != existing {
+		t.Fatalf("folder %q, want the installed %q", ui.pcFolder.Text, existing)
+	}
+	var seen bool
+	for _, o := range allWidgets(ui.content) {
+		if l, ok := o.(*widget.Label); ok && strings.Contains(l.Text, "already installed here") {
+			seen = true
+		}
+	}
+	if !seen {
+		t.Fatal("no update note")
+	}
+}

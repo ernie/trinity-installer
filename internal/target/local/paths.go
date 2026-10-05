@@ -13,6 +13,8 @@ type Options struct {
 	InstallDir  string // the engine's directory on Windows and Linux; the Applications directory on macOS
 	PaksDir     string // equals InstallDir except on macOS
 	AddToSteam  bool
+	StartMenu   bool // the Start Menu on Windows, the applications menu on Linux
+	Desktop     bool
 	SteamRoot   string // "" when Steam is absent
 	SteamUser   string // the chosen user's userdata folder; "" when none could be chosen
 	SteamVRRoot string // "" when SteamVR is absent
@@ -22,7 +24,7 @@ type Options struct {
 }
 
 func Defaults(goos, goarch, home, localAppData string) Options {
-	o := Options{GOOS: goos, GOARCH: goarch}
+	o := Options{GOOS: goos, GOARCH: goarch, StartMenu: goos != "darwin", Desktop: goos != "darwin"}
 	switch goos {
 	case "windows":
 		o.InstallDir = joinFor(goos, localAppData, "Trinity")

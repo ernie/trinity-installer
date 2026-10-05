@@ -60,7 +60,10 @@ type ui struct {
 	// widgets other screens or tests reach into
 	targetButtons               []*widget.Button
 	pcFolder                    *widget.Entry
+	pcStartMenu                 *widget.Check
+	pcDesktop                   *widget.Check
 	pcSteam                     *widget.Check
+	pcInstalled                 bool
 	pcSteamNote                 *widget.Label
 	pcNext                      *widget.Button
 	deviceList                  *widget.List
