@@ -964,7 +964,7 @@ func TestPCScreenPrefillsTheExistingInstall(t *testing.T) {
 	}
 	var seen bool
 	for _, o := range allWidgets(ui.content) {
-		if l, ok := o.(*widget.Label); ok && strings.Contains(l.Text, "already installed here") {
+		if l, ok := o.(*widget.Label); ok && l.Visible() && strings.Contains(l.Text, "already installed") {
 			seen = true
 		}
 	}

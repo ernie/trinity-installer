@@ -18,7 +18,8 @@ func versionString(v string) string {
 }
 
 func main() {
-	uninstall, quiet := uninstallMode(os.Args[1:])
+	exe, _ := os.Executable()
+	uninstall, quiet := uninstallMode(exe, os.Args[1:])
 	if quiet {
 		os.Exit(quietUninstall(configDir()))
 	}

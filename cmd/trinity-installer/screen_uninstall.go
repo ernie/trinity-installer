@@ -22,12 +22,14 @@ var (
 	uninstallRun = local.Uninstall
 )
 
-// uninstallMode reads Settings > Apps' command line: --uninstall first, --quiet anywhere after it.
-func uninstallMode(args []string) (uninstall, quiet bool) {
-	if len(args) == 0 || args[0] != "--uninstall" {
+// uninstallMode reads Settings > Apps' command line (--uninstall first, --quiet anywhere after it); a double-clicked
+// uninstall.exe carries no arguments, so the executable's own name counts too.
+func uninstallMode(exe string, args []string) (uninstall, quiet bool) {
+	named := strings.EqualFold(strings.TrimSuffix(filepath.Base(exe), filepath.Ext(exe)), "uninstall")
+	if !named && (len(args) == 0 || args[0] != "--uninstall") {
 		return false, false
 	}
-	for _, a := range args[1:] {
+	for _, a := range args {
 		if a == "--quiet" {
 			return true, true
 		}
@@ -59,7 +61,7 @@ func (u *ui) showUninstall() {
 	}
 	folder := widget.NewLabel(dir)
 	folder.Wrapping = fyne.TextWrapBreak
-	settings := widget.NewCheck(`Also delete my settings and downloaded files in %APPDATA%\Trinity`, nil)
+	settings := widget.NewCheck("Also delete my settings, downloads and everything else in the Trinity folder", nil)
 	status := wrapped("")
 	status.Hide()
 	remove := widget.NewButton("Remove", nil)

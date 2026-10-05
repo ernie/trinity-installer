@@ -537,3 +537,277 @@ func TestUninstallSkipsShortcutsTheRecordDoesNotName(t *testing.T) {
 		t.Fatal("removed a shortcut the record does not name")
 	}
 }
+
+// engineFiles writes what the engine and the user leave in the install folder, none of it in the record.
+func engineFiles(t *testing.T, dir string) map[string]string {
+	files := map[string]string{
+		"qkey":                        "engine",
+		"pk3cache.dat":                "engine",
+		"notes.txt":                   "user",
+		"baseq3/q3config.cfg":         "engine",
+		"baseq3/autoexec.cfg":         "engine",
+		"baseq3/pak1.pk3":             "pak",
+		"baseq3/screenshots/shot.jpg": "engine",
+		"baseq3/demos/d.dm_68":        "engine",
+		"missionpack/q3config.cfg":    "engine",
+		"missionpack/videos/v.avi":    "engine",
+		"missionpack/tv/match.tvd":    "engine",
+		"missionpack/maps/custom.bsp": "user",
+	}
+	for rel := range files {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return files
+}
+
+func TestDeleteSettingsEmptiesAFolderTheInstallerCreated(t *testing.T) {
+	for _, selfInside := range []bool{false, true} {
+		in := installForUninstall(t)
+		engineFiles(t, in.dir)
+		self := filepath.Join(t.TempDir(), "x.exe")
+		if selfInside {
+			self = filepath.Join(in.dir, "uninstall.exe")
+		}
+		u := in.uninstaller(self)
+		errs, log := u.runIn(in.dir, true)
+		if len(errs) != 0 {
+			t.Fatalf("%v\n%s", errs, log)
+		}
+		if !selfInside {
+			if exists(in.dir) {
+				entries, _ := os.ReadDir(in.dir)
+				t.Fatalf("the installer's own folder was left with %v", entries)
+			}
+			continue
+		}
+		entries, _ := os.ReadDir(in.dir)
+		if len(entries) != 1 || entries[0].Name() != "uninstall.exe" {
+			t.Fatalf("%v", entries)
+		}
+		if len(u.detached) != 1 || !strings.Contains(u.detached[0], "rmdir") {
+			t.Fatalf("%v", u.detached)
+		}
+		if !strings.Contains(log, "baseq3") || !strings.Contains(log, "qkey") {
+			t.Fatalf("each removed entry must be logged:\n%s", log)
+		}
+	}
+}
+
+func TestDeleteSettingsInASharedFolderTakesOnlyTheEngineFiles(t *testing.T) {
+	in := installForUninstall(t)
+	rec := readRecord(t, in.dir)
+	rec.CreatedInstallDir, rec.Dirs = false, nil
+	writeRecord(t, in.dir, rec)
+	files := engineFiles(t, in.dir)
+	u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+	errs, log := u.runIn(in.dir, true)
+	if len(errs) != 0 {
+		t.Fatalf("%v\n%s", errs, log)
+	}
+	for rel, kind := range files {
+		there := exists(filepath.Join(in.dir, filepath.FromSlash(rel)))
+		if kind == "engine" && there {
+			t.Fatalf("%s left", rel)
+		}
+		if kind != "engine" && !there {
+			t.Fatalf("%s removed from a folder the installer did not create", rel)
+		}
+	}
+	if !strings.Contains(log, "pak") {
+		t.Fatalf("the paks left behind must be reported:\n%s", log)
+	}
+}
+
+func TestDeleteSettingsRemovesGameFoldersTheInstallerCreated(t *testing.T) {
+	in := installForUninstall(t)
+	rec := readRecord(t, in.dir)
+	rec.CreatedInstallDir, rec.Dirs = false, []string{"baseq3"}
+	writeRecord(t, in.dir, rec)
+	engineFiles(t, in.dir)
+	u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+	if errs, log := u.runIn(in.dir, true); len(errs) != 0 {
+		t.Fatalf("%v\n%s", errs, log)
+	}
+	if exists(filepath.Join(in.dir, "baseq3")) {
+		t.Fatal("a baseq3 the installer created was left")
+	}
+	if !exists(filepath.Join(in.dir, "missionpack", "maps", "custom.bsp")) || !exists(filepath.Join(in.dir, "notes.txt")) {
+		t.Fatal("removed files from folders the installer did not create")
+	}
+	if exists(filepath.Join(in.dir, "missionpack", "q3config.cfg")) {
+		t.Fatal("missionpack's config left")
+	}
+}
+
+func TestDeleteSettingsLeavesTheFolderWithoutTheBox(t *testing.T) {
+	in := installForUninstall(t)
+	engineFiles(t, in.dir)
+	u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+	if errs, _ := u.runIn(in.dir, false); len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	for _, rel := range []string{"qkey", "baseq3/q3config.cfg", "baseq3/pak1.pk3"} {
+		if !exists(filepath.Join(in.dir, filepath.FromSlash(rel))) {
+			t.Fatalf("%s removed without the box", rel)
+		}
+	}
+}
+
+func TestDeleteSettingsWithoutAnAppDataFolder(t *testing.T) {
+	in := installForUninstall(t)
+	os.RemoveAll(in.settings)
+	u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+	if errs, _ := u.runIn(in.dir, true); len(errs) != 0 {
+		t.Fatalf("a missing %%APPDATA%%\\Trinity is not a failure: %v", errs)
+	}
+}
+
+func TestDeleteSettingsEmptiesTheDefaultFolder(t *testing.T) {
+	for _, owned := range []bool{true, false} {
+		in := installForUninstall(t)
+		// A record from a re-install into the folder an older installer made says the folder was not created.
+		rec := readRecord(t, in.dir)
+		rec.CreatedInstallDir, rec.Dirs = false, nil
+		writeRecord(t, in.dir, rec)
+		engineFiles(t, in.dir)
+		u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+		u.defaultDir = filepath.Join(t.TempDir(), "Games", "Trinity")
+		if owned {
+			u.defaultDir = in.dir
+		}
+		if errs, log := u.runIn(in.dir, true); len(errs) != 0 {
+			t.Fatalf("%v\n%s", errs, log)
+		}
+		pak := exists(filepath.Join(in.dir, "baseq3", "pak1.pk3"))
+		if owned && exists(in.dir) {
+			t.Fatal("the per-user default folder is the installer's, so the box must empty it")
+		}
+		if !owned && !pak {
+			t.Fatal("a folder elsewhere stays a shared folder whatever its name")
+		}
+	}
+}
+
+func TestTheDefaultFolderCountsAsCreated(t *testing.T) {
+	stubCommands(t)
+	fakeSelf(t, "installer")
+	local := t.TempDir()
+	t.Setenv("LOCALAPPDATA", local)
+	for dir, want := range map[string]bool{filepath.Join(local, "Trinity"): true, filepath.Join(t.TempDir(), "Trinity"): false} {
+		os.MkdirAll(dir, 0o755)
+		tg := New(Options{GOOS: "windows", InstallDir: dir, PaksDir: dir})
+		tg.PrepareDestination(context.Background(), func(string) {})
+		tg.PushPackage(context.Background(), pkgOf(t, "v1", map[string]int{"trinity.exe": 1}), func(string) {})
+		if got := readRecord(t, dir).CreatedInstallDir; got != want {
+			t.Fatalf("%s: %v", dir, got)
+		}
+	}
+}
+
+func TestDefaultInstallDir(t *testing.T) {
+	for _, c := range []struct{ goos, home, local, want string }{
+		{"windows", `C:\Users\me`, `C:\Users\me\AppData\Local`, `C:\Users\me\AppData\Local\Trinity`},
+		{"windows", `C:\Users\me`, "", ""},
+		{"linux", "/home/me", "", "/home/me/.local/share/trinity"},
+		{"linux", "", "", ""},
+		{"darwin", "/Users/me", "", ""},
+	} {
+		if got := defaultInstallDir(c.goos, c.home, c.local); got != c.want {
+			t.Errorf("%+v: %q", c, got)
+		}
+	}
+}
+
+func TestDeleteSettingsSweepRemovesALinkNotItsTarget(t *testing.T) {
+	in := installForUninstall(t)
+	outside := t.TempDir()
+	os.WriteFile(filepath.Join(outside, "keep.txt"), []byte("theirs"), 0o644)
+	link(t, outside, filepath.Join(in.dir, "linked"))
+	u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+	if errs, log := u.runIn(in.dir, true); len(errs) != 0 {
+		t.Fatalf("%v\n%s", errs, log)
+	}
+	if !exists(filepath.Join(outside, "keep.txt")) {
+		t.Fatal("the sweep removed files through a link")
+	}
+	if exists(in.dir) {
+		t.Fatal("the link itself was left in the folder")
+	}
+}
+
+// sharedInstall is an install whose record says the folder and its game folders already existed.
+func sharedInstall(t *testing.T) installed {
+	in := installForUninstall(t)
+	rec := readRecord(t, in.dir)
+	rec.CreatedInstallDir, rec.Dirs = false, nil
+	writeRecord(t, in.dir, rec)
+	return in
+}
+
+func TestSharedSweepMatchesNamesWithoutCase(t *testing.T) {
+	in := sharedInstall(t)
+	for _, rel := range []string{"baseq3/Screenshots/a.jpg", "baseq3/AUTOEXEC.CFG", "missionpack/DEMOS/d.dm_71"} {
+		p := filepath.Join(in.dir, filepath.FromSlash(rel))
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte("x"), 0o644)
+	}
+	u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+	if errs, log := u.runIn(in.dir, true); len(errs) != 0 {
+		t.Fatalf("%v\n%s", errs, log)
+	}
+	for _, rel := range []string{"baseq3/Screenshots", "baseq3/AUTOEXEC.CFG", "missionpack/DEMOS"} {
+		if exists(filepath.Join(in.dir, filepath.FromSlash(rel))) {
+			t.Fatalf("%s left", rel)
+		}
+	}
+}
+
+func TestSharedSweepSkipsALinkedGameFolder(t *testing.T) {
+	in := sharedInstall(t)
+	outside := t.TempDir()
+	os.MkdirAll(filepath.Join(outside, "screenshots"), 0o755)
+	os.WriteFile(filepath.Join(outside, "q3config.cfg"), []byte("theirs"), 0o644)
+	os.WriteFile(filepath.Join(outside, "screenshots", "s.jpg"), []byte("theirs"), 0o644)
+	os.RemoveAll(filepath.Join(in.dir, "baseq3"))
+	link(t, outside, filepath.Join(in.dir, "baseq3"))
+	u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+	u.runIn(in.dir, true)
+	if !exists(filepath.Join(outside, "q3config.cfg")) || !exists(filepath.Join(outside, "screenshots", "s.jpg")) {
+		t.Fatal("the sweep went through a linked baseq3")
+	}
+}
+
+func TestLookalikesAreNotTheDefaultFolder(t *testing.T) {
+	for name, defaultOf := range map[string]func(dir string) string{
+		"sibling Trinity2": func(dir string) string { return dir + "2" },
+		"its own parent":   func(dir string) string { return filepath.Join(dir, "Trinity") },
+	} {
+		in := sharedInstall(t)
+		engineFiles(t, in.dir)
+		u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+		u.defaultDir = defaultOf(in.dir)
+		if errs, log := u.runIn(in.dir, true); len(errs) != 0 {
+			t.Fatalf("%s: %v\n%s", name, errs, log)
+		}
+		if !exists(filepath.Join(in.dir, "baseq3", "pak1.pk3")) || !exists(filepath.Join(in.dir, "notes.txt")) {
+			t.Fatalf("%s: emptied as if it were the default folder", name)
+		}
+	}
+	stubCommands(t)
+	fakeSelf(t, "installer")
+	local := t.TempDir()
+	t.Setenv("LOCALAPPDATA", local)
+	for _, dir := range []string{filepath.Join(local, "Trinity2"), local} {
+		os.MkdirAll(dir, 0o755)
+		tg := New(Options{GOOS: "windows", InstallDir: dir, PaksDir: dir})
+		tg.PrepareDestination(context.Background(), func(string) {})
+		tg.PushPackage(context.Background(), pkgOf(t, "v1", map[string]int{"trinity.exe": 1}), func(string) {})
+		if readRecord(t, dir).CreatedInstallDir {
+			t.Fatalf("%s recorded as the default folder", dir)
+		}
+	}
+}

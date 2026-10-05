@@ -28,7 +28,7 @@ On Windows and Linux, when Steam (and SteamVR) is installed and the box is check
 
 ## Uninstalling
 
-On Windows, remove Trinity from Settings > Apps > Trinity. Close Trinity first, and Steam too if Trinity was added to it. The uninstaller removes the files it installed and the folders it created once they are empty (anything you added stays, along with its folder), the Start Menu, Desktop and Steam entries, and, if you tick the box, your settings and downloads in `%APPDATA%\Trinity`. On Linux, delete the install folder, `~/.local/share/applications/trinity.desktop` and `~/Desktop/trinity.desktop`. On macOS, drag Trinity.app to the Trash; its paks and settings are in `~/Library/Application Support/Trinity`.
+On Windows, remove Trinity from Settings > Apps > Trinity. Close Trinity first, and Steam too if Trinity was added to it. The uninstaller removes the files it installed and the folders it created once they are empty (anything you added stays, along with its folder), and the Start Menu, Desktop and Steam entries. Trinity keeps its settings, downloads, screenshots and demos in the install folder, and ticking "Also delete my settings, downloads and everything else in the Trinity folder" removes everything there. If you installed into a folder that already existed, the box removes only Trinity's own settings files and its screenshot, demo, video and TV folders, and leaves the paks, since the uninstaller cannot tell downloaded paks from yours. On Linux, delete the install folder, `~/.local/share/applications/trinity.desktop` and `~/Desktop/trinity.desktop`. On macOS, drag Trinity.app to the Trash; its paks and settings are in `~/Library/Application Support/Trinity`.
 
 ## Third-party software
 

@@ -34,8 +34,10 @@ func (u *ui) showPC() {
 	}
 	intro := widget.NewLabel(what + ":")
 	intro.Wrapping = fyne.TextWrapWord
-	if u.pcInstalled {
-		intro.SetText("Trinity is already installed here; Next updates it and keeps your settings. " + what + ":")
+	note := widget.NewLabel("Trinity is already installed. Reinstalling will repair/update.")
+	note.Wrapping = fyne.TextWrapWord
+	if !u.pcInstalled {
+		note.Hide()
 	}
 	u.pcNext = widget.NewButton("Next", nil)
 	u.pcFolder = widget.NewEntry()
@@ -98,6 +100,6 @@ func (u *ui) showPC() {
 		u.showQuake3()
 	}
 	back := widget.NewButton("Back", func() { u.showTarget() })
-	body := container.NewVBox(intro, container.NewBorder(nil, nil, nil, choose, u.pcFolder), u.pcStartMenu, u.pcDesktop, u.pcSteam, u.pcSteamNote)
+	body := container.NewVBox(note, intro, container.NewBorder(nil, nil, nil, choose, u.pcFolder), u.pcStartMenu, u.pcDesktop, u.pcSteam, u.pcSteamNote)
 	u.show(container.NewBorder(nil, buttonRow(back, u.pcNext), nil, nil, body))
 }

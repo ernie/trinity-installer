@@ -225,6 +225,7 @@ type uninstaller struct {
 	steamVRRunning func() (bool, error)
 	self           func() (string, error)
 	detach         func(cmdLine, dir string) error
+	defaultDir     string // the per-user default install folder, which is the installer's whatever the record says
 }
 
 // Uninstall removes what the Windows install in opts.InstallDir recorded, logging each step and returning every failure; a running Trinity or Steam refuses it before anything is removed.
@@ -236,6 +237,7 @@ func Uninstall(ctx context.Context, opts UninstallOptions, log func(string)) []e
 		steamVRRunning: func() (bool, error) { return processRunning("windows", "vrserver") },
 		self:           os.Executable,
 		detach:         startDetached,
+		defaultDir:     defaultInstallDir("windows", "", os.Getenv("LOCALAPPDATA")),
 	}
 	return u.run(ctx, opts, log)
 }
@@ -257,6 +259,10 @@ func (u *uninstaller) run(ctx context.Context, opts UninstallOptions, log func(s
 	}
 	if recErr == nil && !samePath(rec.InstallDir, dir) {
 		return refuse(fmt.Errorf("the install record in %s is for %s; nothing was removed", dir, rec.InstallDir))
+	}
+	// A record from a re-install over an older installer's folder says the folder already existed.
+	if u.defaultDir != "" && samePath(dir, u.defaultDir) {
+		rec.CreatedInstallDir = true
 	}
 	steamOK := rec.SteamRoot != "" && isSteamRoot(rec.SteamRoot)
 	if err := u.closed(steamOK); err != nil {
@@ -318,27 +324,30 @@ func (u *uninstaller) run(ctx context.Context, opts UninstallOptions, log func(s
 		}
 	}
 	if recErr == nil {
-		u.removeInstalled(dir, rec, log, fail)
+		u.removeInstalled(dir, rec, opts.DeleteSettings, log, fail)
 	} else {
 		fail("leaving "+dir+" in place", fmt.Errorf("without %s the uninstaller cannot tell Trinity's files from yours", recordName))
 		u.deleteKey(log, fail)
 	}
 	if opts.DeleteSettings {
-		roaming, err := roamingDir(os.UserHomeDir)
-		if err == nil {
-			err = os.RemoveAll(filepath.Join(roaming, "Trinity"))
-		}
-		if err != nil {
-			fail("removing your settings", err)
-		} else {
-			log("settings and downloads removed")
+		// The engine keeps its home in the install folder on Windows; an older layout used %APPDATA%\Trinity.
+		if roaming, err := roamingDir(os.UserHomeDir); err == nil {
+			old := filepath.Join(roaming, "Trinity")
+			if _, err := os.Stat(old); err == nil {
+				if err := os.RemoveAll(old); err != nil {
+					fail("removing "+old, err)
+				} else {
+					log("removed " + old)
+				}
+			}
 		}
 	}
 	return errs
 }
 
 // removeInstalled removes the recorded files and folders; the record and the entry go only once every file has, so a locked file can be retried.
-func (u *uninstaller) removeInstalled(dir string, rec installRecord, log func(string), fail func(string, error)) {
+func (u *uninstaller) removeInstalled(dir string, rec installRecord, deleteSettings bool, log func(string), fail func(string, error)) {
+	// Without its own path the uninstaller treats uninstall.exe like any recorded file; Windows refuses to delete the running exe, so the entry stays for a retry.
 	self, _ := u.self()
 	selfInside := false
 	remaining := 0
@@ -359,6 +368,9 @@ func (u *uninstaller) removeInstalled(dir string, rec installRecord, log func(st
 			fail("removing "+rel, err)
 			remaining++
 		}
+	}
+	if deleteSettings {
+		purgeEngineData(dir, rec, self, log, fail)
 	}
 	dirs := append([]string(nil), rec.Dirs...)
 	sort.Slice(dirs, func(i, j int) bool {
@@ -395,6 +407,92 @@ func (u *uninstaller) removeInstalled(dir string, rec installRecord, log func(st
 	case rec.CreatedInstallDir:
 		removeIfEmpty(dir, log)
 	}
+}
+
+// engineDataDirs are the folders the engine fills inside a game folder.
+var engineDataDirs = []string{"screenshots", "demos", "videos", "tv"}
+
+// purgeEngineData removes what the engine wrote beside the install: everything in a folder the installer made, else only the engine's own files, since paks there may be the user's.
+func purgeEngineData(dir string, rec installRecord, self string, log func(string), fail func(string, error)) {
+	removeAll := func(p, name string) {
+		// A link or junction goes by itself, so nothing outside the folder is ever entered.
+		remove := os.RemoveAll
+		if fi, err := os.Lstat(p); err == nil && isLink(fi) {
+			remove = os.Remove
+		}
+		if err := remove(p); err != nil {
+			fail("removing "+p, err)
+		} else {
+			log("removed " + name)
+		}
+	}
+	if rec.CreatedInstallDir {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			fail("emptying "+dir, err)
+			return
+		}
+		for _, e := range entries {
+			p := filepath.Join(dir, e.Name())
+			// The record goes once the entry is deleted; the running uninstaller deletes itself after it exits.
+			if e.Name() == recordName || self != "" && samePath(p, self) {
+				continue
+			}
+			removeAll(p, e.Name())
+		}
+		return
+	}
+	for _, name := range []string{"qkey", "pk3cache.dat"} {
+		if err := os.Remove(filepath.Join(dir, name)); err == nil {
+			log("removed " + name)
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			fail("removing "+name, err)
+		}
+	}
+	for _, game := range []string{"baseq3", "missionpack"} {
+		p := filepath.Join(dir, game)
+		fi, err := os.Lstat(p)
+		if err != nil || isLink(fi) || !fi.IsDir() {
+			continue
+		}
+		created := false
+		for _, d := range rec.Dirs {
+			created = created || d == game
+		}
+		if created {
+			removeAll(p, game)
+			continue
+		}
+		entries, err := os.ReadDir(p)
+		if err != nil {
+			fail("reading "+p, err)
+			continue
+		}
+		paks := 0
+		for _, e := range entries {
+			name, ext := e.Name(), strings.ToLower(filepath.Ext(e.Name()))
+			switch {
+			case e.Type().IsRegular() && ext == ".cfg":
+				removeAll(filepath.Join(p, name), game+"/"+name)
+			case e.IsDir() && containsFold(engineDataDirs, name):
+				removeAll(filepath.Join(p, name), game+"/"+name)
+			case e.Type().IsRegular() && ext == ".pk3":
+				paks++
+			}
+		}
+		if paks > 0 {
+			log(fmt.Sprintf("left %d paks in %s: the installer cannot tell downloaded paks from yours, so delete any you no longer want", paks, p))
+		}
+	}
+}
+
+func containsFold(list []string, s string) bool {
+	for _, v := range list {
+		if strings.EqualFold(v, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func (u *uninstaller) deleteKey(log func(string), fail func(string, error)) {

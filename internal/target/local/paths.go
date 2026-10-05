@@ -25,15 +25,11 @@ type Options struct {
 
 func Defaults(goos, goarch, home, localAppData string) Options {
 	o := Options{GOOS: goos, GOARCH: goarch, StartMenu: goos != "darwin", Desktop: goos != "darwin"}
-	switch goos {
-	case "windows":
-		o.InstallDir = joinFor(goos, localAppData, "Trinity")
-		o.PaksDir = o.InstallDir
-	case "darwin":
+	if goos == "darwin" {
 		o.InstallDir = joinFor(goos, home, "Applications")
 		o.PaksDir = joinFor(goos, home, "Library", "Application Support", "Trinity")
-	default:
-		o.InstallDir = joinFor(goos, home, ".local", "share", "trinity")
+	} else {
+		o.InstallDir = defaultInstallDir(goos, home, localAppData)
 		o.PaksDir = o.InstallDir
 	}
 	if goos != "darwin" && goos == runtime.GOOS {
@@ -47,6 +43,17 @@ func Defaults(goos, goarch, home, localAppData string) Options {
 		}
 	}
 	return o
+}
+
+// defaultInstallDir is the per-user folder the installer owns, so it counts as created by the installer; "" on macOS, whose Applications folder is shared.
+func defaultInstallDir(goos, home, localAppData string) string {
+	switch {
+	case goos == "windows" && localAppData != "":
+		return joinFor(goos, localAppData, "Trinity")
+	case goos == "linux" && home != "":
+		return joinFor(goos, home, ".local", "share", "trinity")
+	}
+	return ""
 }
 
 // joinFor uses goos's separator rather than the host's, so defaults for every OS are computable anywhere.

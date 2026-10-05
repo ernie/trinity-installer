@@ -61,7 +61,7 @@ func TestUninstallMode(t *testing.T) {
 		"--uninstall --x --quiet":   {true, true},
 		"--uninstall --quiet extra": {true, true},
 	} {
-		uninstall, quiet := uninstallMode(strings.Fields(args))
+		uninstall, quiet := uninstallMode(`C:\\T\\trinity-installer.exe`, strings.Fields(args))
 		if uninstall != want[0] || quiet != want[1] {
 			t.Errorf("%q: %v %v", args, uninstall, quiet)
 		}
@@ -84,7 +84,7 @@ func TestUninstallScreenRemoves(t *testing.T) {
 	if !strings.Contains(text, "Remove Trinity from this PC?") || !strings.Contains(text, dir) {
 		t.Fatalf("%q", text)
 	}
-	if ui.uninstallSettings.Checked || ui.uninstallSettings.Text != `Also delete my settings and downloaded files in %APPDATA%\Trinity` {
+	if ui.uninstallSettings.Checked || ui.uninstallSettings.Text != "Also delete my settings, downloads and everything else in the Trinity folder" {
 		t.Fatalf("%q checked %v", ui.uninstallSettings.Text, ui.uninstallSettings.Checked)
 	}
 	ui.uninstallSettings.SetChecked(true)
@@ -216,5 +216,19 @@ func TestQuietUninstallKeepsSettings(t *testing.T) {
 	installedDir = func() (string, error) { return "", errors.New("no entry") }
 	if code := quietUninstall(cfg); code != 1 {
 		t.Fatalf("a missing entry exited %d", code)
+	}
+}
+
+func TestUninstallModeFromTheExeName(t *testing.T) {
+	for _, exe := range []string{`C:\\Users\\me\\AppData\\Local\\Trinity\\uninstall.exe`, `/home/me/trinity/Uninstall`, `D:\\T\\UNINSTALL.EXE`} {
+		if u, q := uninstallMode(exe, nil); !u || q {
+			t.Fatalf("%s: uninstall=%v quiet=%v", exe, u, q)
+		}
+		if u, q := uninstallMode(exe, []string{"--quiet"}); !u || !q {
+			t.Fatalf("%s --quiet: uninstall=%v quiet=%v", exe, u, q)
+		}
+	}
+	if u, _ := uninstallMode(`C:\\T\\trinity-installer.exe`, nil); u {
+		t.Fatal("the installer's own name must not uninstall")
 	}
 }
