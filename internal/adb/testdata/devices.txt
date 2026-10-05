@@ -1,0 +1,5 @@
+List of devices attached
+2G0YC1ZF8M0ABC         device product:eureka model:Quest_3 device:eureka transport_id:3
+PB324XJGL2090068G      unauthorized transport_id:4
+frame:5555             offline transport_id:5
+
