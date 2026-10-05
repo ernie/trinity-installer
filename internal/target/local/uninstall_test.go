@@ -695,9 +695,9 @@ func TestDeleteSettingsEmptiesTheDefaultFolder(t *testing.T) {
 func TestTheDefaultFolderCountsAsCreated(t *testing.T) {
 	stubCommands(t)
 	fakeSelf(t, "installer")
-	local := t.TempDir()
-	t.Setenv("LOCALAPPDATA", local)
-	for dir, want := range map[string]bool{filepath.Join(local, "Trinity"): true, filepath.Join(t.TempDir(), "Trinity"): false} {
+	drive := t.TempDir()
+	t.Setenv("SystemDrive", drive)
+	for dir, want := range map[string]bool{filepath.Join(drive, "Games", "Trinity"): true, filepath.Join(t.TempDir(), "Trinity"): false} {
 		os.MkdirAll(dir, 0o755)
 		tg := New(Options{GOOS: "windows", InstallDir: dir, PaksDir: dir})
 		tg.PrepareDestination(context.Background(), func(string) {})
@@ -710,7 +710,8 @@ func TestTheDefaultFolderCountsAsCreated(t *testing.T) {
 
 func TestDefaultInstallDir(t *testing.T) {
 	for _, c := range []struct{ goos, home, local, want string }{
-		{"windows", `C:\Users\me`, `C:\Users\me\AppData\Local`, `C:\Users\me\AppData\Local\Trinity`},
+		{"windows", `C:\Users\me`, `C:`, `C:\Games\Trinity`},
+		{"windows", `C:\Users\me`, `C:\`, `C:\Games\Trinity`},
 		{"windows", `C:\Users\me`, "", ""},
 		{"linux", "/home/me", "", "/home/me/.local/share/trinity"},
 		{"linux", "", "", ""},
@@ -799,9 +800,9 @@ func TestLookalikesAreNotTheDefaultFolder(t *testing.T) {
 	}
 	stubCommands(t)
 	fakeSelf(t, "installer")
-	local := t.TempDir()
-	t.Setenv("LOCALAPPDATA", local)
-	for _, dir := range []string{filepath.Join(local, "Trinity2"), local} {
+	drive := t.TempDir()
+	t.Setenv("SystemDrive", drive)
+	for _, dir := range []string{filepath.Join(drive, "Games", "Trinity2"), filepath.Join(drive, "Games")} {
 		os.MkdirAll(dir, 0o755)
 		tg := New(Options{GOOS: "windows", InstallDir: dir, PaksDir: dir})
 		tg.PrepareDestination(context.Background(), func(string) {})

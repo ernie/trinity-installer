@@ -840,7 +840,7 @@ func TestHintKeepsThePairingInstruction(t *testing.T) {
 }
 
 func TestPCNextStartsDisabledWithoutAFolder(t *testing.T) {
-	t.Setenv("LOCALAPPDATA", "")
+	t.Setenv("SystemDrive", "")
 	a := test.NewApp()
 	defer a.Quit()
 	ui := newUI(a, a.NewWindow("t"), t.TempDir())

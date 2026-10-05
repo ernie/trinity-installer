@@ -19,7 +19,7 @@ import (
 func (u *ui) showPC() {
 	if u.pc.InstallDir == "" {
 		home, _ := os.UserHomeDir()
-		u.pc = local.Defaults(u.goos, runtime.GOARCH, home, os.Getenv("LOCALAPPDATA"))
+		u.pc = local.Defaults(u.goos, runtime.GOARCH, home, os.Getenv("SystemDrive"))
 		// An existing install wins over the default, so an update lands where the user put Trinity before.
 		if u.goos == "windows" {
 			if dir, err := local.InstalledDir(); err == nil && dir != "" {

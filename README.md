@@ -20,7 +20,7 @@ Every target needs a retail Quake III Arena install with its pak0 files. If the 
 
 ## PC install
 
-The PC install goes under a per-user folder: `%LOCALAPPDATA%\Trinity` on Windows, `~/.local/share/trinity` on Linux, and `~/Applications` plus `~/Library/Application Support/Trinity` on macOS.
+The PC install goes to `C:\Games\Trinity` on Windows (no administrator rights needed; pick another folder on the Destination screen if you prefer), and under a per-user folder elsewhere: `~/.local/share/trinity` on Linux, and `~/Applications` plus `~/Library/Application Support/Trinity` on macOS.
 
 On Windows and Linux, the "Add to Start Menu" ("Add to applications menu" on Linux) and "Add to Desktop" boxes, both ticked by default, choose which launch shortcuts the installer creates.
 

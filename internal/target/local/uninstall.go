@@ -237,7 +237,7 @@ func Uninstall(ctx context.Context, opts UninstallOptions, log func(string)) []e
 		steamVRRunning: func() (bool, error) { return processRunning("windows", "vrserver") },
 		self:           os.Executable,
 		detach:         startDetached,
-		defaultDir:     defaultInstallDir("windows", "", os.Getenv("LOCALAPPDATA")),
+		defaultDir:     defaultInstallDir("windows", "", os.Getenv("SystemDrive")),
 	}
 	return u.run(ctx, opts, log)
 }

@@ -134,7 +134,7 @@ func (t *Target) PrepareDestination(ctx context.Context, log func(string)) (stri
 			}
 		}
 	}
-	if def := defaultInstallDir(t.opts.GOOS, t.home, os.Getenv("LOCALAPPDATA")); def != "" && samePath(t.opts.InstallDir, def) {
+	if def := defaultInstallDir(t.opts.GOOS, t.home, os.Getenv("SystemDrive")); def != "" && samePath(t.opts.InstallDir, def) {
 		t.rec.CreatedInstallDir = true
 	}
 	log("install dir " + t.opts.InstallDir)

@@ -15,8 +15,8 @@ import (
 )
 
 func TestDefaultsPerOS(t *testing.T) {
-	w := Defaults("windows", "amd64", `C:\Users\me`, `C:\Users\me\AppData\Local`)
-	if w.InstallDir != `C:\Users\me\AppData\Local\Trinity` || w.PaksDir != w.InstallDir {
+	w := Defaults("windows", "amd64", `C:\Users\me`, `C:`)
+	if w.InstallDir != `C:\Games\Trinity` || w.PaksDir != w.InstallDir {
 		t.Fatalf("%+v", w)
 	}
 	l := Defaults("linux", "amd64", "/home/me", "")

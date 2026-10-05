@@ -23,13 +23,13 @@ type Options struct {
 	Icon        []byte // written as trinity.png for the Linux desktop entry
 }
 
-func Defaults(goos, goarch, home, localAppData string) Options {
+func Defaults(goos, goarch, home, systemDrive string) Options {
 	o := Options{GOOS: goos, GOARCH: goarch, StartMenu: goos != "darwin", Desktop: goos != "darwin"}
 	if goos == "darwin" {
 		o.InstallDir = joinFor(goos, home, "Applications")
 		o.PaksDir = joinFor(goos, home, "Library", "Application Support", "Trinity")
 	} else {
-		o.InstallDir = defaultInstallDir(goos, home, localAppData)
+		o.InstallDir = defaultInstallDir(goos, home, systemDrive)
 		o.PaksDir = o.InstallDir
 	}
 	if goos != "darwin" && goos == runtime.GOOS {
@@ -45,11 +45,12 @@ func Defaults(goos, goarch, home, localAppData string) Options {
 	return o
 }
 
-// defaultInstallDir is the per-user folder the installer owns, so it counts as created by the installer; "" on macOS, whose Applications folder is shared.
-func defaultInstallDir(goos, home, localAppData string) string {
+// defaultInstallDir is the folder the installer owns, so it counts as created by the installer; "" on macOS, whose Applications folder is shared.
+// Windows gets a visible games folder on the system drive rather than a per-user app folder, as a game install is expected to.
+func defaultInstallDir(goos, home, systemDrive string) string {
 	switch {
-	case goos == "windows" && localAppData != "":
-		return joinFor(goos, localAppData, "Trinity")
+	case goos == "windows" && systemDrive != "":
+		return joinFor(goos, strings.TrimRight(systemDrive, `\/`), "Games", "Trinity")
 	case goos == "linux" && home != "":
 		return joinFor(goos, home, ".local", "share", "trinity")
 	}
