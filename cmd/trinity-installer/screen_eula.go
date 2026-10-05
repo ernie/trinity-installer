@@ -51,7 +51,7 @@ func (u *ui) showEULA() {
 	intro := widget.NewLabel("The 1.32 patch files are id Software's and come with their license. Read it to the end to continue.")
 	intro.Wrapping = fyne.TextWrapWord
 	back := widget.NewButton("Back", func() { u.showQuake3() })
-	u.show(container.NewBorder(intro, container.NewVBox(agree, container.NewHBox(back, retry, next)), nil, nil, scroll))
+	u.show(container.NewBorder(intro, container.NewVBox(agree, buttonRow(back, retry, next)), nil, nil, scroll))
 	// The test driver lays the scroll out with no room at all; a real window never does.
 	if s := scroll.Size(); s.Width <= 0 || s.Height <= 0 {
 		scroll.Resize(fyne.NewSize(400, 200))

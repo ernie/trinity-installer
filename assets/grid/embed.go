@@ -21,3 +21,6 @@ var Icon []byte
 func Art() map[string][]byte {
 	return map[string][]byte{"capsule": capsule, "wide": wide, "hero": hero, "logo": logo, "icon": Icon}
 }
+
+//go:embed panel.png
+var Panel []byte

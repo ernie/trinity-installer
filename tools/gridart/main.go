@@ -47,6 +47,8 @@ func main() {
 	capsule := fit(centerCrop(load(filepath.Join(*src, "trinity-wallpaper-portrait-orig.png")), 600, 900), 600, 900)
 	composite(capsule, wordmark, 0.7, 0.08)
 	save(*out, "capsule.png", capsule)
+	// The installer's side panel is the capsule's middle, so the window and the SteamVR card match.
+	save(*out, "panel.png", fit(centerCrop(capsule, 300, 520), 300, 520))
 
 	wide := fit(centerCrop(load(filepath.Join(*src, "trinity-wallpaper-wqhd.png")), 920, 430), 920, 430)
 	compositeRight(wide, wordmark, 0.30, 0.07, 0.04)

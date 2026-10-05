@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 	"golang.org/x/crypto/ssh"
 
@@ -92,19 +94,41 @@ func newUI(a fyne.App, w fyne.Window, cfgDir string) *ui {
 	if err != nil {
 		log.Println("cannot open the install log:", err)
 	}
-	w.SetContent(container.NewBorder(u.header(), nil, nil, nil, u.content))
+	w.SetContent(container.NewBorder(nil, nil, u.panel(), nil, u.content))
 	return u
 }
 
-func (u *ui) header() fyne.CanvasObject {
-	icon := widget.NewIcon(fyne.NewStaticResource("icon.png", grid.Icon))
-	title := widget.NewLabelWithStyle("Trinity Installer", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	return container.NewHBox(icon, title)
+// panelSize is the side panel cut from the SteamVR capsule; the window is this plus the 460 px content column.
+var panelSize = fyne.NewSize(300, 520)
+
+func (u *ui) panel() fyne.CanvasObject {
+	img := canvas.NewImageFromResource(fyne.NewStaticResource("panel.png", grid.Panel))
+	img.FillMode = canvas.ImageFillContain
+	img.SetMinSize(panelSize)
+	return img
 }
 
+// contentInset keeps the text off the window and panel edges; the log pane and lists inherit it too.
+const contentInset = 12
+
 func (u *ui) show(screen fyne.CanvasObject) {
-	u.content.Objects = []fyne.CanvasObject{screen}
+	u.content.Objects = []fyne.CanvasObject{container.New(layout.NewCustomPaddedLayout(contentInset, contentInset, contentInset, contentInset), screen)}
 	u.content.Refresh()
+}
+
+// buttonGap keeps neighboring navigation buttons from touching.
+const buttonGap = 10
+
+// buttonRow right-aligns a screen's navigation buttons with a gap between them.
+func buttonRow(buttons ...fyne.CanvasObject) fyne.CanvasObject {
+	items := []fyne.CanvasObject{layout.NewSpacer()}
+	for i, b := range buttons {
+		if i > 0 {
+			b = container.New(layout.NewCustomPaddedLayout(0, 0, buttonGap, 0), b)
+		}
+		items = append(items, b)
+	}
+	return container.NewHBox(items...)
 }
 
 // logf writes to the log file and, on the install screen, the log pane; callable from any goroutine.

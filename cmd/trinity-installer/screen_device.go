@@ -71,7 +71,7 @@ func (u *ui) showDevice() {
 		cancel()
 		u.showTarget()
 	})
-	u.show(container.NewBorder(u.deviceStatus, container.NewHBox(back, u.deviceNext), nil, nil, u.deviceList))
+	u.show(container.NewBorder(u.deviceStatus, buttonRow(back, u.deviceNext), nil, nil, u.deviceList))
 	a := u.adb
 	watchDevices(ctx, func() {
 		got, devs, err := u.fetchDevices(ctx, a)

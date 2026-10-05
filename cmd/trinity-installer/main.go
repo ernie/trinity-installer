@@ -24,7 +24,7 @@ func main() {
 	}
 	a := app.NewWithID("run.trinity.installer")
 	w := a.NewWindow(versionString(version))
-	w.Resize(fyne.NewSize(460, 520))
+	w.Resize(fyne.NewSize(460+panelSize.Width, panelSize.Height))
 	u := newUI(a, w, configDir())
 	u.goos = runtime.GOOS
 	u.start(uninstall)

@@ -75,5 +75,5 @@ func (u *ui) showPC() {
 	}
 	back := widget.NewButton("Back", func() { u.showTarget() })
 	body := container.NewVBox(intro, container.NewBorder(nil, nil, nil, choose, u.pcFolder), u.pcSteam, u.pcSteamNote)
-	u.show(container.NewBorder(nil, container.NewHBox(back, u.pcNext), nil, nil, body))
+	u.show(container.NewBorder(nil, buttonRow(back, u.pcNext), nil, nil, body))
 }

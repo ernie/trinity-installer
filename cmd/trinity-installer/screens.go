@@ -154,7 +154,7 @@ func (u *ui) showHeadset() {
 			})
 		})
 	}
-	u.show(container.NewBorder(status, container.NewVBox(manual, container.NewHBox(back, next)), nil, nil, list))
+	u.show(container.NewBorder(status, container.NewVBox(manual, buttonRow(back, next)), nil, nil, list))
 }
 
 func (u *ui) showQuake3() {
@@ -206,7 +206,7 @@ func (u *ui) renderValidation() {
 		}
 	}
 	back := widget.NewButton("Back", func() { u.backFromQuake3() })
-	u.show(container.NewBorder(nil, container.NewHBox(back, u.quake3Next), nil, nil, container.NewVBox(body...)))
+	u.show(container.NewBorder(nil, buttonRow(back, u.quake3Next), nil, nil, container.NewVBox(body...)))
 }
 
 func (u *ui) backFromQuake3() {
@@ -283,7 +283,7 @@ func (u *ui) showInstall() {
 	back := widget.NewButton("Back", func() { u.showQuake3() })
 	back.Hide()
 	u.installRetry, u.installBack = retry, back
-	u.show(container.NewBorder(rows, container.NewHBox(back, retry), nil, nil, u.logView))
+	u.show(container.NewBorder(rows, buttonRow(back, retry), nil, nil, u.logView))
 	run := runInstall
 	var start func(from int)
 	start = func(from int) {

@@ -88,7 +88,7 @@ func (u *ui) showUninstall() {
 	}
 	u.uninstallRemove, u.uninstallCancel, u.uninstallSettings, u.uninstallStatus = remove, cancel, settings, status
 	body := container.NewVBox(wrapped("Remove Trinity from this PC?"), folder, settings, status)
-	u.show(container.NewBorder(nil, container.NewHBox(cancel, remove), nil, nil, body))
+	u.show(container.NewBorder(nil, buttonRow(cancel, remove), nil, nil, body))
 }
 
 func (u *ui) showUninstalled(errs []error) {

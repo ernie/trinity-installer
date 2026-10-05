@@ -25,7 +25,7 @@ func ellipsizeMiddle(s string, maxWidth float32, style fyne.TextStyle) string {
 
 // buttonTextWidth is the room a full-width button has for its label in this window.
 func (u *ui) buttonTextWidth() float32 {
-	w := u.win.Canvas().Size().Width
+	w := u.content.Size().Width
 	if w <= 0 {
 		w = 460
 	}
