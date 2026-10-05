@@ -1,0 +1,301 @@
+package local
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/ernie/trinity-installer/internal/release"
+	"github.com/ernie/trinity-installer/internal/steam"
+	"github.com/ernie/trinity-installer/internal/store"
+	"github.com/ernie/trinity-installer/internal/target"
+)
+
+type Target struct {
+	opts           Options
+	home           string
+	appID          uint32
+	steamVRRunning func() bool
+	steamRunning   func() bool
+}
+
+func New(o Options) *Target {
+	home, _ := os.UserHomeDir()
+	return &Target{
+		opts:           o,
+		home:           home,
+		steamVRRunning: func() bool { return processRunning(o.GOOS, "vrserver") },
+		steamRunning:   func() bool { return processRunning(o.GOOS, "steam") },
+	}
+}
+
+func (t *Target) Name() string {
+	if t.opts.GOOS == "darwin" {
+		return "This Mac"
+	}
+	return "This PC"
+}
+
+func (t *Target) Store() store.Store { return store.Local() }
+
+func (t *Target) Asset() release.Spec {
+	s, _ := release.PCSpec(t.opts.GOOS, t.opts.GOARCH)
+	return s
+}
+
+func (t *Target) Reconnect(context.Context) error { return nil }
+
+func (t *Target) steamShortcut() bool {
+	return t.opts.GOOS != "darwin" && t.opts.AddToSteam && t.opts.SteamRoot != ""
+}
+
+func (t *Target) Applicable(context.Context) ([]target.Step, error) {
+	steps := []target.Step{target.PushPatch}
+	if t.opts.GOOS != "darwin" {
+		steps = append(steps, target.RegisterLaunchEntry)
+	}
+	if t.steamShortcut() {
+		steps = append(steps, target.ReadAppID, target.InstallArtwork)
+		if t.opts.SteamVRRoot != "" {
+			steps = append(steps, target.RegisterVR)
+		}
+	}
+	return steps, nil
+}
+
+func (t *Target) Done() string {
+	where := map[string]string{"windows": "the Start Menu", "darwin": "Applications", "linux": "your applications menu"}[t.opts.GOOS]
+	s := "Trinity is installed. Launch it from " + where
+	if t.steamShortcut() {
+		s += ", and from Steam the next time you start it"
+	}
+	return s + "."
+}
+
+func (t *Target) PrepareDestination(ctx context.Context, log func(string)) (string, error) {
+	for _, d := range []string{t.opts.InstallDir, filepath.Join(t.opts.PaksDir, "baseq3"), filepath.Join(t.opts.PaksDir, "missionpack")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return "", err
+		}
+	}
+	log("install dir " + t.opts.InstallDir)
+	return t.opts.PaksDir, nil
+}
+
+func (t *Target) PushPackage(ctx context.Context, pkg *release.Package, log func(string)) error {
+	if pkg.Spec.Kind == release.KindDMG {
+		return t.installDMG(ctx, pkg.Raw, log)
+	}
+	s := t.Store()
+	for _, e := range pkg.Entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		rc, err := e.Open()
+		if err != nil {
+			return err
+		}
+		err = s.Put(ctx, filepath.Join(t.opts.InstallDir, filepath.FromSlash(e.Rel)), rc, e.Size(), packageMode(e.Rel, e.File.Mode()))
+		rc.Close()
+		if err != nil {
+			return fmt.Errorf("%s: %w", e.Rel, err)
+		}
+		log("installed " + e.Rel)
+	}
+	if t.opts.GOOS == "linux" && t.opts.Icon != nil {
+		if err := os.WriteFile(filepath.Join(t.opts.InstallDir, "trinity.png"), t.opts.Icon, 0o644); err != nil {
+			return err
+		}
+		log("installed trinity.png")
+	}
+	return nil
+}
+
+// packageMode marks the engine's binaries executable even when the zip lost their exec bits.
+func packageMode(rel string, zipMode os.FileMode) os.FileMode {
+	base := path.Base(rel)
+	if base == "trinity" || base == "trinity.ded" || strings.HasSuffix(base, ".so") || strings.Contains(base, ".so.") {
+		return 0o755
+	}
+	return zipMode.Perm() | 0o600
+}
+
+func (t *Target) exe() string {
+	if t.opts.GOOS == "windows" {
+		return filepath.Join(t.opts.InstallDir, "trinity.exe")
+	}
+	return filepath.Join(t.opts.InstallDir, "trinity")
+}
+
+func (t *Target) RegisterLaunchEntry(ctx context.Context, log func(string)) error {
+	if err := t.registerDesktopEntry(ctx, log); err != nil {
+		return err
+	}
+	if !t.steamShortcut() {
+		return nil
+	}
+	// Steam rewrites shortcuts.vdf from memory when it exits, which would drop a shortcut written now.
+	if t.steamRunning() {
+		return errors.New("Steam is running. Close Steam, then press Retry.")
+	}
+	return t.registerSteamShortcut(log)
+}
+
+func (t *Target) registerDesktopEntry(ctx context.Context, log func(string)) error {
+	switch t.opts.GOOS {
+	case "windows":
+		return t.windowsShortcut(ctx, log)
+	case "linux":
+		return t.desktopFile(log)
+	}
+	return nil
+}
+
+func (t *Target) shortcutsPath() (string, error) {
+	user, err := steam.SteamUserData(t.opts.SteamRoot)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(user, "config", "shortcuts.vdf"), nil
+}
+
+func (t *Target) registerSteamShortcut(log func(string)) error {
+	p, err := t.shortcutsPath()
+	if err != nil {
+		return err
+	}
+	old, err := os.ReadFile(p)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	out, id, err := steam.AppendShortcut(old, steam.Shortcut{AppName: "Trinity", Exe: t.exe()}, t.opts.InstallDir)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(p, out, 0o644); err != nil {
+		return err
+	}
+	t.appID = id
+	log(fmt.Sprintf("Steam shortcut written (app id %d); Steam shows it at its next start", id))
+	return nil
+}
+
+func (t *Target) ReadAppID(context.Context, func(string)) (uint32, error) {
+	if t.appID == 0 {
+		return 0, fmt.Errorf("the Steam shortcut was not written")
+	}
+	return t.appID, nil
+}
+
+func (t *Target) InstallArtwork(ctx context.Context, appID uint32, art map[string][]byte, log func(string)) error {
+	user, err := steam.SteamUserData(t.opts.SteamRoot)
+	if err != nil {
+		return err
+	}
+	grid := filepath.Join(user, "config", "grid")
+	if err := os.MkdirAll(grid, 0o755); err != nil {
+		return err
+	}
+	for slot, name := range steam.GridFiles(appID) {
+		png, ok := art[slot]
+		if !ok {
+			return fmt.Errorf("no artwork for %s", slot)
+		}
+		if err := os.WriteFile(filepath.Join(grid, name), png, 0o644); err != nil {
+			return err
+		}
+		log("installed " + name)
+	}
+	return nil
+}
+
+func (t *Target) RegisterVR(ctx context.Context, appID uint32, art map[string][]byte, log func(string)) error {
+	// The manifest's image_path names the capsule, so it must be in place before SteamVR reads the manifest.
+	capsule, ok := art["capsule"]
+	if !ok {
+		return errors.New("no artwork for capsule")
+	}
+	if err := os.WriteFile(filepath.Join(t.opts.InstallDir, "trinity-capsule.png"), capsule, 0o644); err != nil {
+		return err
+	}
+	manifest := filepath.Join(t.opts.InstallDir, "trinity.vrmanifest")
+	key := map[string]string{"windows": "binary_path_windows", "linux": "binary_path_linux"}[t.opts.GOOS]
+	if err := os.WriteFile(manifest, steam.Manifest(t.opts.InstallDir, filepath.Base(t.exe()), appID, key), 0o644); err != nil {
+		return err
+	}
+	if t.steamVRRunning() {
+		name, args, err := steam.VrcmdArgs(t.opts.SteamVRRoot, t.opts.GOOS, manifest)
+		if err != nil {
+			return err
+		}
+		if out, err := runCommand(ctx, name, args...); err != nil {
+			return fmt.Errorf("SteamVR did not accept the manifest: %w: %s", err, out)
+		}
+		log("SteamVR registered the manifest")
+		return nil
+	}
+	return t.listManifest(manifest, log)
+}
+
+// listManifest edits appconfig.json, which SteamVR reads at startup; with vrserver down nothing can clobber the edit.
+func (t *Target) listManifest(manifest string, log func(string)) error {
+	cfg := filepath.Join(t.opts.SteamRoot, "config", "appconfig.json")
+	doc := map[string]json.RawMessage{}
+	var paths []string
+	b, err := os.ReadFile(cfg)
+	switch {
+	case err == nil:
+		if err := json.Unmarshal(b, &doc); err != nil {
+			return fmt.Errorf("SteamVR's %s is not readable JSON: %w", cfg, err)
+		}
+		if raw, ok := doc["manifest_paths"]; ok {
+			if err := json.Unmarshal(raw, &paths); err != nil {
+				return fmt.Errorf("SteamVR's %s has unexpected manifest_paths: %w", cfg, err)
+			}
+		}
+	case !os.IsNotExist(err):
+		return err
+	}
+	for _, p := range paths {
+		if p == manifest || (t.opts.GOOS == "windows" && strings.EqualFold(p, manifest)) {
+			log("manifest already listed for SteamVR")
+			return nil
+		}
+	}
+	doc["manifest_paths"], _ = json.Marshal(append(paths, manifest))
+	out, err := json.MarshalIndent(doc, "", "   ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(cfg, out, 0o644); err != nil {
+		return err
+	}
+	log("manifest listed for SteamVR's next start")
+	return nil
+}
+
+func processRunning(goos, name string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	switch goos {
+	case "windows":
+		out, err := runCommand(ctx, "tasklist", "/NH", "/FI", "IMAGENAME eq "+name+".exe")
+		return err == nil && strings.Contains(strings.ToLower(string(out)), name+".exe")
+	case "linux":
+		_, err := runCommand(ctx, "pgrep", "-x", name)
+		return err == nil
+	}
+	return false
+}

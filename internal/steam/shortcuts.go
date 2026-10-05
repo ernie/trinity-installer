@@ -43,11 +43,16 @@ func ParseShortcuts(b []byte) ([]Shortcut, error) {
 	return out, nil
 }
 
+// normalizeExe makes the quoted, backslash-separated paths Steam stores comparable with a plain exe path.
+func normalizeExe(exe string) string {
+	return path.Clean(strings.ReplaceAll(strings.Trim(exe, `"`), `\`, "/"))
+}
+
 // FindAppID matches the shortcut whose Exe is exe; Steam stores the exe quoted.
 func FindAppID(shortcuts []Shortcut, exe string) (uint32, bool) {
-	want := path.Clean(exe)
+	want := normalizeExe(exe)
 	for _, s := range shortcuts {
-		if path.Clean(strings.Trim(s.Exe, `"`)) == want {
+		if normalizeExe(s.Exe) == want {
 			return s.AppID, true
 		}
 	}

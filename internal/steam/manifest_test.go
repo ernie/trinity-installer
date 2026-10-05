@@ -25,7 +25,7 @@ func TestGameID64(t *testing.T) {
 }
 
 func TestManifest(t *testing.T) {
-	b := Manifest("/home/steamos/devkit-game/Trinity", 2634369398)
+	b := Manifest("/home/steamos/devkit-game/Trinity", "trinity", 2634369398, "binary_path_linux_arm")
 	var m struct {
 		Source string `json:"source"`
 		Apps   []struct {

@@ -29,14 +29,6 @@ const libraryFolders = `"libraryfolders"
 }
 `
 
-func TestParseLibraryFolders(t *testing.T) {
-	got := parseLibraryFolders(strings.NewReader(libraryFolders))
-	want := []string{`C:\Program Files (x86)\Steam`, `D:\SteamLibrary`}
-	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("got %q", got)
-	}
-}
-
 func TestFindQuake3(t *testing.T) {
 	root := t.TempDir()
 	lib := filepath.Join(root, "other")
