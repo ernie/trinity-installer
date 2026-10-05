@@ -43,12 +43,14 @@ type fakeSession struct {
 	// Seq answers a command substring from a list, one entry per call; the last entry repeats.
 	Seq  map[string][]string
 	Fail map[string]error
+	// FailCmd fails only a command equal to its key, so the "true" probe never matches a script that contains "true".
+	FailCmd map[string]error
 	// FailOnce fails the first matching command and then clears itself.
 	FailOnce map[string]error
 }
 
 func newFake() *fakeSession {
-	return &fakeSession{home: "/home/steamos", files: map[string]fakeFile{}, Replies: map[string]string{}, Seq: map[string][]string{}, Fail: map[string]error{}, FailOnce: map[string]error{}}
+	return &fakeSession{home: "/home/steamos", files: map[string]fakeFile{}, Replies: map[string]string{}, Seq: map[string][]string{}, Fail: map[string]error{}, FailCmd: map[string]error{}, FailOnce: map[string]error{}}
 }
 
 func (f *fakeSession) Home() string { return f.home }
@@ -57,6 +59,9 @@ func (f *fakeSession) Run(ctx context.Context, cmd string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.cmds = append(f.cmds, cmd)
+	if err, ok := f.FailCmd[cmd]; ok {
+		return "", err
+	}
 	for k, err := range f.Fail {
 		if strings.Contains(cmd, k) {
 			return "", err
@@ -122,6 +127,19 @@ func (f *fakeSession) ran(sub string) int {
 	n := 0
 	for _, c := range f.cmds {
 		if strings.Contains(c, sub) {
+			n++
+		}
+	}
+	return n
+}
+
+// runs counts the recorded commands equal to cmd.
+func (f *fakeSession) runs(cmd string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, c := range f.cmds {
+		if c == cmd {
 			n++
 		}
 	}
@@ -310,7 +328,7 @@ func TestRetryFromFailedStep(t *testing.T) {
 	if _, err := runFrom(tg, opts, se.Index); err != nil {
 		t.Fatal(err)
 	}
-	if sess.ran("df --output=avail") != dfs || sess.ran("true") == 0 {
+	if sess.ran("df --output=avail") != dfs || sess.runs("true") != 1 {
 		t.Fatalf("retry re-ran earlier steps or skipped the probe: %v", sess.cmds)
 	}
 	if len(sess.files) <= puts || sess.closed || tg.Session() != sess {
@@ -324,7 +342,7 @@ func TestRetryReconnectsToANewSession(t *testing.T) {
 	first.Replies["steam.pipe"] = "NOSTEAM\n"
 	_, err := runFrom(tg, opts, 0)
 	se := stepError(t, err, target.RegisterLaunchEntry)
-	first.Fail["true"] = errors.New("connection lost")
+	first.FailCmd["true"] = errors.New("connection lost")
 	second := newFake()
 	headset(second)
 	tg.reconnect = func(context.Context) (frame.Session, error) { return second, nil }
@@ -348,7 +366,7 @@ func TestRetryReportsAFailedReconnect(t *testing.T) {
 	sess.Replies["steam.pipe"] = "NOSTEAM\n"
 	_, err := runFrom(tg, opts, 0)
 	se := stepError(t, err, target.RegisterLaunchEntry)
-	sess.Fail["true"] = errors.New("connection lost")
+	sess.FailCmd["true"] = errors.New("connection lost")
 	_, err = runFrom(tg, opts, se.Index)
 	stepError(t, err, target.RegisterLaunchEntry)
 	if !strings.Contains(err.Error(), "reconnecting to the headset") || sess.closed {

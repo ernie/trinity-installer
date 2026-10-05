@@ -88,6 +88,7 @@ func pushPaks(ctx context.Context, s store.Store, st *state, log func(string)) e
 
 func pushPatch(ctx context.Context, s store.Store, st *state, log func(string)) error {
 	if st.opts.Patch == nil {
+		log("the 1.32 patch files came from your Quake III folder")
 		return nil
 	}
 	var items []pending

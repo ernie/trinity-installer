@@ -21,6 +21,69 @@ func TestSteamUserData(t *testing.T) {
 	}
 }
 
+// loginUsers writes two users in loginusers.vdf's layout, marking mostRecent (if either) as the most recent.
+func loginUsers(mostRecent string) string {
+	const tmpl = `"users"
+{
+	"76561197970270790"
+	{
+		"AccountName"		"first"
+		"MostRecent"		"R1"
+	}
+	// a comment Steam never writes but the format allows
+	"76561197980270791"
+	{
+		"AccountName"		"second"
+		"MostRecent"		"R2"
+	}
+}
+`
+	r1, r2 := "0", "0"
+	switch mostRecent {
+	case "76561197970270790":
+		r1 = "1"
+	case "76561197980270791":
+		r2 = "1"
+	}
+	return strings.NewReplacer("R1", r1, "R2", r2).Replace(tmpl)
+}
+
+func TestSteamUser(t *testing.T) {
+	root := t.TempDir()
+	if _, err := SteamUser(root); err == nil {
+		t.Fatal("a root without userdata has a user")
+	}
+	os.MkdirAll(filepath.Join(root, "userdata", "0"), 0o755)
+	if _, err := SteamUser(root); err == nil || !strings.Contains(err.Error(), "no Steam user") {
+		t.Fatalf("%v", err)
+	}
+	// account ids are the low 32 bits of the id64s in loginusers.vdf
+	one := filepath.Join(root, "userdata", "10005062")
+	os.MkdirAll(one, 0o755)
+	if dir, err := SteamUser(root); err != nil || dir != one {
+		t.Fatalf("single user: %q %v", dir, err)
+	}
+	two := filepath.Join(root, "userdata", "20005063")
+	os.MkdirAll(two, 0o755)
+	if _, err := SteamUser(root); err == nil || !strings.Contains(err.Error(), "20005063") {
+		t.Fatalf("several users without loginusers.vdf: %v", err)
+	}
+	cfg := filepath.Join(root, "config", "loginusers.vdf")
+	os.MkdirAll(filepath.Dir(cfg), 0o755)
+	os.WriteFile(cfg, []byte(loginUsers("76561197980270791")), 0o644)
+	if dir, err := SteamUser(root); err != nil || dir != two {
+		t.Fatalf("most recent: %q %v", dir, err)
+	}
+	os.WriteFile(cfg, []byte(loginUsers("76561197970270790")), 0o644)
+	if dir, err := SteamUser(root); err != nil || dir != one {
+		t.Fatalf("most recent: %q %v", dir, err)
+	}
+	os.WriteFile(cfg, []byte(loginUsers("")), 0o644)
+	if _, err := SteamUser(root); err == nil {
+		t.Fatal("several users and none most recent")
+	}
+}
+
 func TestSteamVRRootAndVrcmd(t *testing.T) {
 	root := t.TempDir()
 	lib := filepath.Join(root, "lib2")
@@ -50,8 +113,12 @@ func TestSteamVRRootAndVrcmd(t *testing.T) {
 }
 
 func TestManifestBinaryKey(t *testing.T) {
-	b := Manifest(`C:\T`, "trinity.exe", 7, "binary_path_windows")
+	b := Manifest(`C:\T`, "trinity.exe", 7, "binary_path_windows", "")
 	if !strings.Contains(string(b), `"binary_path_windows": "C:\\T\\trinity.exe"`) || !strings.Contains(string(b), `"steam.app.7"`) {
+		t.Fatalf("%s", b)
+	}
+	// The PC zips ship no vrpreferences.json, so the PC manifest must not name one.
+	if strings.Contains(string(b), "preference_settings_path") {
 		t.Fatalf("%s", b)
 	}
 }

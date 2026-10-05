@@ -53,7 +53,7 @@ func TestOpenRejectsMissingRootAndTraversal(t *testing.T) {
 	if _, err := Open(FrameSpec(), zipOf(t, "frame-arm64/other", "frame-arm64/baseq3/x")); err == nil {
 		t.Fatal("zip without root accepted")
 	}
-	for _, bad := range []string{"../x", "/etc/x", "a/../../x", `a\..\..\x`, `..\x`} {
+	for _, bad := range []string{"../x", "/etc/x", "a/../../x", `a\..\..\x`, `..\x`, "C:/x", `C:\Windows\x`, "c:x"} {
 		if _, err := Open(FrameSpec(), zipOf(t, "trinity", bad)); err == nil {
 			t.Fatalf("%q accepted", bad)
 		}

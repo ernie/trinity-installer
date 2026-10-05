@@ -9,13 +9,17 @@ import (
 func writePak(t *testing.T, dir, rel string, size int64) {
 	t.Helper()
 	p := filepath.Join(dir, filepath.FromSlash(rel))
-	os.MkdirAll(filepath.Dir(p), 0o755)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	f, err := os.Create(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.Truncate(size)
-	f.Close()
+	defer f.Close()
+	if err := f.Truncate(size); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func fullInstall(t *testing.T, missionpack bool) string {
@@ -86,7 +90,7 @@ func TestBaseq3NeedsPatch(t *testing.T) {
 	dir := fullInstall(t, false)
 	os.Remove(filepath.Join(dir, "baseq3", "pak7.pk3"))
 	v, _ := Validate(dir)
-	if !v.Ready() || v.Baseq3.State() != "NEEDS PATCH" || v.NeededPatch()[0] != "baseq3/pak7.pk3" {
+	if got := v.NeededPatch(); !v.Ready() || v.Baseq3.State() != "NEEDS PATCH" || len(got) != 1 || got[0] != "baseq3/pak7.pk3" {
 		t.Fatalf("%+v %v", v, v.NeededPatch())
 	}
 }

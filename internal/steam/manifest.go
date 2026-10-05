@@ -22,22 +22,24 @@ func GameID64(appID uint32) uint64 {
 	return uint64(appID)<<32 | 0x02000000
 }
 
-// Manifest joins with the separator dir already uses, so a Windows dir stays backslashed and the Frame's stays slashed.
-func Manifest(dir, exe string, appID uint32, binaryKey string) []byte {
+// Manifest joins with the separator dir already uses, so a Windows dir stays backslashed and the Frame's stays slashed; an empty prefs names no preferences file.
+func Manifest(dir, exe string, appID uint32, binaryKey, prefs string) []byte {
 	sep := "/"
 	if strings.Contains(dir, `\`) {
 		sep = `\`
 	}
 	join := func(name string) string { return strings.TrimRight(dir, sep) + sep + name }
 	app := map[string]any{
-		"app_key":                  fmt.Sprintf("steam.app.%d", appID),
-		"launch_type":              "binary",
-		binaryKey:                  join(exe),
-		"working_directory":        dir,
-		"is_openxr":                1,
-		"preference_settings_path": join("vrpreferences.json"),
-		"image_path":               join("trinity-capsule.png"),
-		"strings":                  map[string]any{"en_us": map[string]any{"name": "Trinity"}},
+		"app_key":           fmt.Sprintf("steam.app.%d", appID),
+		"launch_type":       "binary",
+		binaryKey:           join(exe),
+		"working_directory": dir,
+		"is_openxr":         1,
+		"image_path":        join("trinity-capsule.png"),
+		"strings":           map[string]any{"en_us": map[string]any{"name": "Trinity"}},
+	}
+	if prefs != "" {
+		app["preference_settings_path"] = join(prefs)
 	}
 	b, _ := json.MarshalIndent(map[string]any{"source": "builtin", "applications": []any{app}}, "", "\t")
 	return append(b, '\n')

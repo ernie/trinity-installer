@@ -19,10 +19,13 @@ type memStore struct {
 	modes map[string]os.FileMode
 	free  int64
 	puts  int
+	// failPut fails the next put of a path once; onFreeSpace runs inside the free-space check.
+	failPut     map[string]error
+	onFreeSpace func()
 }
 
 func newMemStore() *memStore {
-	return &memStore{files: map[string][]byte{}, modes: map[string]os.FileMode{}, free: 1 << 40}
+	return &memStore{files: map[string][]byte{}, modes: map[string]os.FileMode{}, free: 1 << 40, failPut: map[string]error{}}
 }
 
 func (m *memStore) Join(elem ...string) string { return path.Join(elem...) }
@@ -31,9 +34,18 @@ func (m *memStore) Stat(p string) (int64, bool, error) {
 	b, ok := m.files[p]
 	return int64(len(b)), ok, nil
 }
-func (m *memStore) FreeSpace(context.Context, string) (int64, error) { return m.free, nil }
+func (m *memStore) FreeSpace(context.Context, string) (int64, error) {
+	if m.onFreeSpace != nil {
+		m.onFreeSpace()
+	}
+	return m.free, nil
+}
 func (m *memStore) Put(ctx context.Context, p string, r io.Reader, size int64, mode os.FileMode) error {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err, ok := m.failPut[p]; ok {
+		delete(m.failPut, p)
 		return err
 	}
 	b, err := io.ReadAll(r)
@@ -93,9 +105,15 @@ func (f *fakeTarget) PushPackage(ctx context.Context, pkg *release.Package, log 
 		return err
 	}
 	for _, e := range pkg.Entries {
-		rc, _ := e.Open()
-		f.st.Put(ctx, f.st.Join(f.paksDir, e.Rel), rc, e.Size(), 0o755)
+		rc, err := e.Open()
+		if err != nil {
+			return err
+		}
+		err = f.st.Put(ctx, f.st.Join(f.paksDir, e.Rel), rc, e.Size(), 0o755)
 		rc.Close()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

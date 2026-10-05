@@ -2,10 +2,10 @@ package patch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 
 	"github.com/ernie/trinity-installer/internal/release"
@@ -29,9 +29,13 @@ func FetchEULA(ctx context.Context, client *http.Client, url string) (string, er
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("the license text returned HTTP %d", resp.StatusCode)
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	const limit = 1 << 20
+	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return "", err
+	}
+	if len(b) > limit {
+		return "", errors.New("the license text is larger than 1 MiB; it is not shown in part")
 	}
 	return strings.TrimSpace(string(b)), nil
 }
@@ -86,13 +90,4 @@ func OpenSet(raw []byte) (*Set, error) {
 func (s *Set) Entry(rel string) (release.Entry, bool) {
 	e, ok := s.entries[rel]
 	return e, ok
-}
-
-func (s *Set) Rels() []string {
-	var out []string
-	for k := range s.entries {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }

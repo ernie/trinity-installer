@@ -78,7 +78,10 @@ func (t *Target) PushPackage(ctx context.Context, pkg *release.Package, log func
 		return err
 	}
 	if err := t.a.Install(ctx, t.d.Serial, f.Name()); err != nil {
-		return fmt.Errorf("%w; if an older Trinity build is on the headset, uninstall it there and press Retry", err)
+		if needsUninstall(err) {
+			return fmt.Errorf("%w; the Trinity build on the headset cannot be updated in place, so uninstall it there and press Retry", err)
+		}
+		return err
 	}
 	log("installed " + pkg.Spec.Asset)
 	return nil
@@ -96,4 +99,15 @@ func (t *Target) RegisterVR(context.Context, uint32, map[string][]byte, func(str
 
 func (t *Target) InstallArtwork(context.Context, uint32, map[string][]byte, func(string)) error {
 	return errNotApplicable
+}
+
+// needsUninstall spots the failures only removing the installed build can fix: a different signature or a newer version.
+func needsUninstall(err error) bool {
+	msg := err.Error()
+	for _, code := range []string{"INSTALL_FAILED_UPDATE_INCOMPATIBLE", "INSTALL_FAILED_VERSION_DOWNGRADE", "INCONSISTENT_CERTIFICATES", "signatures do not match"} {
+		if strings.Contains(msg, code) {
+			return true
+		}
+	}
+	return false
 }

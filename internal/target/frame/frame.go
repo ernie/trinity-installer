@@ -203,7 +203,7 @@ func (t *Target) RegisterVR(ctx context.Context, appID uint32, art map[string][]
 		return err
 	}
 	manifest := path.Join(t.titleDir, "trinity.vrmanifest")
-	if err := t.sess.Put(ctx, manifest, bytes.NewReader(steam.Manifest(t.titleDir, "trinity", appID, "binary_path_linux_arm")), 0o644); err != nil {
+	if err := t.sess.Put(ctx, manifest, bytes.NewReader(steam.Manifest(t.titleDir, "trinity", appID, "binary_path_linux_arm", "vrpreferences.json")), 0o644); err != nil {
 		return err
 	}
 	if _, err := t.sess.Run(ctx, vrcmdPrefix+"--appmanifest "+manifest); err != nil {

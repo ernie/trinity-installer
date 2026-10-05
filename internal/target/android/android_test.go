@@ -20,6 +20,7 @@ type fake struct {
 	devices    string
 	installed  string
 	installErr error
+	installOut string
 }
 
 func (f *fake) adb() *adb.ADB {
@@ -32,7 +33,7 @@ func (f *fake) adb() *adb.ADB {
 			}
 			f.installed = string(b)
 			if f.installErr != nil {
-				return []byte("Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]"), f.installErr
+				return []byte(f.installOut), f.installErr
 			}
 			return []byte("Success\n"), nil
 		}
@@ -81,10 +82,22 @@ func TestPushPackageInstallsTheAPK(t *testing.T) {
 }
 
 func TestPushPackageFailureHintsAtUninstall(t *testing.T) {
-	f := &fake{installErr: errors.New("exit status 1")}
 	pkg := &release.Package{Spec: release.AndroidSpec(), Raw: []byte("apk bytes")}
+	for _, out := range []string{
+		"Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Package run.trinity signatures do not match newer version; ignoring!]",
+		"Failure [INSTALL_FAILED_VERSION_DOWNGRADE]",
+		"Failure [INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES]",
+	} {
+		f := &fake{installErr: errors.New("exit status 1"), installOut: out}
+		err := New(f.adb(), quest).PushPackage(context.Background(), pkg, func(string) {})
+		if err == nil || !strings.Contains(err.Error(), out) || !strings.Contains(err.Error(), "uninstall") {
+			t.Fatalf("%s: %v", out, err)
+		}
+	}
+	// Uninstalling cannot fix a full headset, so the hint would send the user the wrong way.
+	f := &fake{installErr: errors.New("exit status 1"), installOut: "Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]"}
 	err := New(f.adb(), quest).PushPackage(context.Background(), pkg, func(string) {})
-	if err == nil || !strings.Contains(err.Error(), "INSTALL_FAILED_UPDATE_INCOMPATIBLE") || !strings.Contains(err.Error(), "uninstall") {
+	if err == nil || !strings.Contains(err.Error(), "INSUFFICIENT_STORAGE") || strings.Contains(err.Error(), "uninstall") {
 		t.Fatal(err)
 	}
 }

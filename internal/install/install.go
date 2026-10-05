@@ -56,8 +56,15 @@ type state struct {
 
 // Run performs plan[from:] against t; a retry (from > 0) first asks the target to reconnect.
 func Run(ctx context.Context, t target.Target, plan []target.Step, opts Options, from int, report func(Progress)) error {
+	if from < 0 || from >= len(plan) {
+		return fmt.Errorf("no step %d in a plan of %d", from, len(plan))
+	}
 	var st *state
-	if opts.Carry != nil && opts.Carry.st != nil && from > 0 {
+	if from > 0 {
+		// A resumed step needs what the earlier steps produced; without it, it would run on an empty state.
+		if opts.Carry == nil || opts.Carry.st == nil {
+			return fmt.Errorf("cannot resume at %s without the earlier steps' state", plan[from])
+		}
 		st = opts.Carry.st
 	} else {
 		st = &state{}

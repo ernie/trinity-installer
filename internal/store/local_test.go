@@ -38,6 +38,9 @@ func TestLocalPutCancelled(t *testing.T) {
 	if _, exists, _ := Local().Stat(filepath.Join(dir, "x")); exists {
 		t.Fatal("partial file left at the destination")
 	}
+	if _, exists, _ := Local().Stat(filepath.Join(dir, "x.part")); exists {
+		t.Fatal("the .part file outlived a cancelled put")
+	}
 }
 
 func TestLocalFreeSpace(t *testing.T) {

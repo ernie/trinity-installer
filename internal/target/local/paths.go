@@ -14,6 +14,7 @@ type Options struct {
 	PaksDir     string // equals InstallDir except on macOS
 	AddToSteam  bool
 	SteamRoot   string // "" when Steam is absent
+	SteamUser   string // the chosen user's userdata folder; "" when none could be chosen
 	SteamVRRoot string // "" when SteamVR is absent
 	GOOS        string
 	GOARCH      string

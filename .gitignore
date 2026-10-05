@@ -14,4 +14,3 @@ build/
 fyne-cross/
 internal/adb/bin/*/*
 !internal/adb/bin/*/.keep
-!internal/adb/bin/*/NOTICE.txt

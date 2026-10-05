@@ -1,0 +1,79 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/widget"
+
+	"github.com/ernie/trinity-installer/assets/grid"
+	"github.com/ernie/trinity-installer/internal/steam"
+	"github.com/ernie/trinity-installer/internal/target/local"
+)
+
+func (u *ui) showPC() {
+	if u.pc.InstallDir == "" {
+		home, _ := os.UserHomeDir()
+		u.pc = local.Defaults(u.goos, runtime.GOARCH, home, os.Getenv("LOCALAPPDATA"))
+	}
+	what := "Install folder"
+	if u.goos == "darwin" {
+		what = "Applications folder for Trinity.app"
+	}
+	intro := widget.NewLabel(what + ":")
+	intro.Wrapping = fyne.TextWrapWord
+	u.pcNext = widget.NewButton("Next", nil)
+	u.pcFolder = widget.NewEntry()
+	// A relative path would land wherever the installer happened to start.
+	validate := func(s string) {
+		if filepath.IsAbs(strings.TrimSpace(s)) {
+			u.pcNext.Enable()
+		} else {
+			u.pcNext.Disable()
+		}
+	}
+	u.pcFolder.OnChanged = validate
+	u.pcFolder.SetText(u.pc.InstallDir)
+	validate(u.pcFolder.Text)
+	choose := widget.NewButton("Choose...", func() {
+		dialog.ShowFolderOpen(func(uri fyne.ListableURI, err error) {
+			if err == nil && uri != nil {
+				u.pcFolder.SetText(filepath.Clean(uri.Path()))
+			}
+		}, u.win)
+	})
+	u.pcSteam = widget.NewCheck("Add to Steam", nil)
+	u.pcSteamNote = widget.NewLabel("")
+	u.pcSteamNote.Wrapping = fyne.TextWrapWord
+	u.pcSteamNote.Hide()
+	if u.pc.SteamRoot == "" || u.goos == "darwin" {
+		u.pcSteam.Hide()
+	} else if user, err := steam.SteamUser(u.pc.SteamRoot); err != nil {
+		// Without a user there is no library to add the shortcut to, so the box cannot be ticked.
+		u.pc.SteamUser, u.pc.AddToSteam = "", false
+		u.pcSteam.Disable()
+		u.pcSteamNote.SetText("Steam user not found: " + err.Error())
+		u.pcSteamNote.Show()
+	} else {
+		u.pc.SteamUser = user
+	}
+	u.pcSteam.SetChecked(u.pc.AddToSteam)
+	u.pcNext.OnTapped = func() {
+		u.pc.InstallDir = strings.TrimSpace(u.pcFolder.Text)
+		if u.goos != "darwin" {
+			u.pc.PaksDir = u.pc.InstallDir
+		}
+		u.pc.AddToSteam = u.pcSteam.Checked
+		u.pc.Icon = grid.Icon
+		u.target = local.New(u.pc)
+		u.showQuake3()
+	}
+	back := widget.NewButton("Back", func() { u.showTarget() })
+	body := container.NewVBox(intro, container.NewBorder(nil, nil, nil, choose, u.pcFolder), u.pcSteam, u.pcSteamNote)
+	u.show(container.NewBorder(nil, container.NewHBox(back, u.pcNext), nil, nil, body))
+}

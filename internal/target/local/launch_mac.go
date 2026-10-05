@@ -24,7 +24,12 @@ func (t *Target) installDMG(ctx context.Context, raw []byte, log func(string)) e
 	if out, err := runCommand(ctx, "hdiutil", "attach", "-nobrowse", "-readonly", "-mountpoint", mount, dmg); err != nil {
 		return fmt.Errorf("mounting the disk image: %w: %s", err, out)
 	}
-	defer runCommand(context.Background(), "hdiutil", "detach", mount)
+	defer func() {
+		// A volume left mounted is harmless to the install but should be visible in the log.
+		if out, err := runCommand(context.Background(), "hdiutil", "detach", mount); err != nil {
+			log(fmt.Sprintf("could not unmount the disk image at %s: %v: %s", mount, err, out))
+		}
+	}()
 	// Copy beside the old app and swap, so a failed copy leaves the previous install working.
 	dst := filepath.Join(t.opts.InstallDir, "Trinity.app")
 	staged := dst + ".part"

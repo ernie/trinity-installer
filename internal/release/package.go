@@ -39,7 +39,9 @@ func Open(spec Spec, raw []byte) (*Package, error) {
 			continue
 		}
 		rel := path.Clean(name)
-		if strings.HasPrefix(name, "/") || rel == ".." || strings.HasPrefix(rel, "../") {
+		// Windows reads a colon in the first segment as a drive or stream name, never a folder inside the install dir.
+		head, _, _ := strings.Cut(rel, "/")
+		if strings.HasPrefix(name, "/") || rel == ".." || strings.HasPrefix(rel, "../") || strings.Contains(head, ":") {
 			return nil, fmt.Errorf("the release zip has an unsafe entry %q", f.Name)
 		}
 		p.Entries = append(p.Entries, Entry{Rel: rel, File: f})

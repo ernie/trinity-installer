@@ -25,7 +25,7 @@ func TestGameID64(t *testing.T) {
 }
 
 func TestManifest(t *testing.T) {
-	b := Manifest("/home/steamos/devkit-game/Trinity", "trinity", 2634369398, "binary_path_linux_arm")
+	b := Manifest("/home/steamos/devkit-game/Trinity", "trinity", 2634369398, "binary_path_linux_arm", "vrpreferences.json")
 	var m struct {
 		Source string `json:"source"`
 		Apps   []struct {
@@ -45,5 +45,33 @@ func TestManifest(t *testing.T) {
 	a := m.Apps[0]
 	if m.Source != "builtin" || a.Key != "steam.app.2634369398" || a.Launch != "binary" || a.Bin != "/home/steamos/devkit-game/Trinity/trinity" || a.Dir != "/home/steamos/devkit-game/Trinity" || a.OpenXR != 1 || a.Prefs != "/home/steamos/devkit-game/Trinity/vrpreferences.json" || a.Image != "/home/steamos/devkit-game/Trinity/trinity-capsule.png" || a.Str["en_us"]["name"] != "Trinity" {
 		t.Fatalf("%+v", a)
+	}
+}
+
+// frameManifest is the manifest the verified Frame install registered; the Frame's bytes must not drift.
+const frameManifest = `{
+	"applications": [
+		{
+			"app_key": "steam.app.2634369398",
+			"binary_path_linux_arm": "/home/steamos/devkit-game/Trinity/trinity",
+			"image_path": "/home/steamos/devkit-game/Trinity/trinity-capsule.png",
+			"is_openxr": 1,
+			"launch_type": "binary",
+			"preference_settings_path": "/home/steamos/devkit-game/Trinity/vrpreferences.json",
+			"strings": {
+				"en_us": {
+					"name": "Trinity"
+				}
+			},
+			"working_directory": "/home/steamos/devkit-game/Trinity"
+		}
+	],
+	"source": "builtin"
+}
+`
+
+func TestManifestFrameBytes(t *testing.T) {
+	if got := string(Manifest("/home/steamos/devkit-game/Trinity", "trinity", 2634369398, "binary_path_linux_arm", "vrpreferences.json")); got != frameManifest {
+		t.Fatalf("%s", got)
 	}
 }

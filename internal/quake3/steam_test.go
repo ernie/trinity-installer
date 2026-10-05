@@ -46,9 +46,23 @@ func TestFindQuake3(t *testing.T) {
 	}
 }
 
-func TestSteamRootsExported(t *testing.T) {
-	a, b := SteamRoots(), steamRoots()
-	if strings.Join(a, "|") != strings.Join(b, "|") {
-		t.Fatalf("%v != %v", a, b)
+func TestSteamRootsKeepsOnlySteamInstalls(t *testing.T) {
+	base := t.TempDir()
+	missing := filepath.Join(base, "missing")
+	empty := filepath.Join(base, "empty")
+	users := filepath.Join(base, "users")
+	apps := filepath.Join(base, "apps")
+	os.MkdirAll(empty, 0o755)
+	os.MkdirAll(filepath.Join(users, "userdata"), 0o755)
+	os.MkdirAll(filepath.Join(apps, "steamapps"), 0o755)
+	old := candidateRoots
+	candidateRoots = func() []string { return []string{missing, empty, users, apps} }
+	defer func() { candidateRoots = old }()
+	if got := SteamRoots(); strings.Join(got, "|") != users+"|"+apps {
+		t.Fatalf("%v", got)
+	}
+	candidateRoots = func() []string { return []string{missing} }
+	if got := SteamRoots(); len(got) != 0 {
+		t.Fatalf("a PC without Steam has roots %v", got)
 	}
 }

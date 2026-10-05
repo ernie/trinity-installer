@@ -2,12 +2,15 @@ package local
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ernie/trinity-installer/internal/release"
+	"github.com/ernie/trinity-installer/internal/steam"
 	"github.com/ernie/trinity-installer/internal/target"
 )
 
@@ -31,15 +34,19 @@ func TestApplicable(t *testing.T) {
 	if len(plan) != 6 || plan[4] != target.PushPatch || plan[5] != target.RegisterLaunchEntry {
 		t.Fatalf("%v", plan)
 	}
-	plan, _ = target.Plan(context.Background(), New(Options{GOOS: "windows", AddToSteam: true, SteamRoot: "x", SteamVRRoot: "y"}))
+	plan, _ = target.Plan(context.Background(), New(Options{GOOS: "windows", AddToSteam: true, SteamRoot: "x", SteamUser: "x/userdata/1", SteamVRRoot: "y"}))
 	if len(plan) != 9 {
 		t.Fatalf("%v", plan)
 	}
-	plan, _ = target.Plan(context.Background(), New(Options{GOOS: "windows", AddToSteam: true, SteamRoot: "x"}))
+	plan, _ = target.Plan(context.Background(), New(Options{GOOS: "windows", AddToSteam: true, SteamRoot: "x", SteamUser: "x/userdata/1"}))
 	if len(plan) != 8 || plan[7] != target.InstallArtwork {
 		t.Fatalf("%v", plan)
 	}
-	plan, _ = target.Plan(context.Background(), New(Options{GOOS: "darwin", AddToSteam: true, SteamRoot: "x", SteamVRRoot: "y"}))
+	plan, _ = target.Plan(context.Background(), New(Options{GOOS: "windows", AddToSteam: true, SteamRoot: "x", SteamVRRoot: "y"}))
+	if len(plan) != 6 {
+		t.Fatalf("Steam steps planned without a Steam user: %v", plan)
+	}
+	plan, _ = target.Plan(context.Background(), New(Options{GOOS: "darwin", AddToSteam: true, SteamRoot: "x", SteamUser: "x/userdata/1", SteamVRRoot: "y"}))
 	if len(plan) != 5 || plan[4] != target.PushPatch {
 		t.Fatalf("mac must never register with Steam: %v", plan)
 	}
@@ -47,9 +54,9 @@ func TestApplicable(t *testing.T) {
 
 func TestLinuxDesktopEntry(t *testing.T) {
 	home := t.TempDir()
-	tg := New(Options{GOOS: "linux", InstallDir: filepath.Join(home, "trinity"), PaksDir: filepath.Join(home, "trinity")})
+	// A slash path, as on Linux; the host's own separators would be quoted as backslashes.
+	tg := New(Options{GOOS: "linux", InstallDir: "/home/me/trinity", PaksDir: "/home/me/trinity"})
 	tg.home = home
-	os.MkdirAll(tg.opts.InstallDir, 0o755)
 	if err := tg.RegisterLaunchEntry(context.Background(), func(string) {}); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +64,7 @@ func TestLinuxDesktopEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"[Desktop Entry]", "Name=Trinity", "Exec=" + filepath.Join(home, "trinity", "trinity"), "Icon=" + filepath.Join(home, "trinity", "trinity.png"), "Categories=Game;"} {
+	for _, want := range []string{"[Desktop Entry]", "Name=Trinity", "\nExec=/home/me/trinity/trinity\n", "\nPath=/home/me/trinity\n", "\nIcon=/home/me/trinity/trinity.png\n", "Categories=Game;"} {
 		if !strings.Contains(string(b), want) {
 			t.Fatalf("missing %q in %s", want, b)
 		}
@@ -65,11 +72,20 @@ func TestLinuxDesktopEntry(t *testing.T) {
 }
 
 func TestDesktopExecQuoting(t *testing.T) {
-	if got := desktopExec("/home/me/trinity/trinity"); got != "/home/me/trinity/trinity" {
-		t.Fatal(got)
-	}
-	if got := desktopExec(`/home/my games/"t"/trinity`); got != `"/home/my games/\"t\"/trinity"` {
-		t.Fatal(got)
+	for in, want := range map[string]string{
+		"/home/me/trinity/trinity": "/home/me/trinity/trinity",
+		"/home/me/100%/trinity":    "/home/me/100%%/trinity",
+		// Quoting escapes " ` $ \ with a backslash; the string escape then doubles every backslash.
+		`/home/my games/"t"/trinity`: `"/home/my games/\\"t\\"/trinity"`,
+		`/home/me/a\b/trinity`:       `"/home/me/a\\\\b/trinity"`,
+		"/home/me/$HOME/trinity":     `"/home/me/\\$HOME/trinity"`,
+		"/home/me/`x`/trinity":       "\"/home/me/\\\\`x\\\\`/trinity\"",
+		"/home/me/50% (old)/trinity": `"/home/me/50%% (old)/trinity"`,
+		"/home/me/a~b/trinity":       `"/home/me/a~b/trinity"`,
+	} {
+		if got := desktopExec(in); got != want {
+			t.Errorf("%s: %s, want %s", in, got, want)
+		}
 	}
 }
 
@@ -89,6 +105,32 @@ func TestLaunchEntryIdempotent(t *testing.T) {
 	}
 }
 
+func TestSteamShortcutIdempotent(t *testing.T) {
+	steamRoot := t.TempDir()
+	user := filepath.Join(steamRoot, "userdata", "10005062")
+	home := t.TempDir()
+	install := filepath.Join(home, "trinity")
+	tg := New(Options{GOOS: "linux", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot, SteamUser: user})
+	tg.home = home
+	tg.steamRunning = func() (bool, error) { return false, nil }
+	var ids []uint32
+	for i := 0; i < 2; i++ {
+		if err := tg.RegisterLaunchEntry(context.Background(), func(string) {}); err != nil {
+			t.Fatal(err)
+		}
+		id, err := tg.ReadAppID(context.Background(), func(string) {})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	b, _ := os.ReadFile(filepath.Join(user, "config", "shortcuts.vdf"))
+	list, err := steam.ParseShortcuts(b)
+	if err != nil || len(list) != 1 || ids[0] != ids[1] || list[0].AppID != ids[0] {
+		t.Fatalf("%+v %v %v", list, ids, err)
+	}
+}
+
 func TestWindowsShortcutCommand(t *testing.T) {
 	var got []string
 	old := runCommand
@@ -97,14 +139,34 @@ func TestWindowsShortcutCommand(t *testing.T) {
 		return nil, nil
 	}
 	defer func() { runCommand = old }()
+	t.Setenv("APPDATA", `D:\Roaming`)
 	tg := New(Options{GOOS: "windows", InstallDir: `C:\Users\me\AppData\Local\Trinity`})
 	tg.home = `C:\Users\me`
 	if err := tg.RegisterLaunchEntry(context.Background(), func(string) {}); err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(got, " ")
-	if got[0] != "powershell" || !strings.Contains(joined, `WScript.Shell`) || !strings.Contains(joined, `Trinity.lnk`) || !strings.Contains(joined, `trinity.exe`) {
+	if got[0] != "powershell" || !strings.Contains(joined, `WScript.Shell`) || !strings.Contains(joined, `trinity.exe`) {
 		t.Fatalf("%v", got)
+	}
+	// A redirected APPDATA moves the Start Menu with it.
+	if !strings.Contains(joined, `D:\Roaming\Microsoft\Windows\Start Menu\Programs\Trinity.lnk`) {
+		t.Fatalf("%v", got)
+	}
+	t.Setenv("APPDATA", "")
+	if err := tg.RegisterLaunchEntry(context.Background(), func(string) {}); err != nil || !strings.Contains(strings.Join(got, " "), `C:\Users\me\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trinity.lnk`) {
+		t.Fatalf("%v %v", err, got)
+	}
+	tg.home, tg.homeErr = "", errors.New("no HOME")
+	if err := tg.RegisterLaunchEntry(context.Background(), func(string) {}); err == nil || !strings.Contains(err.Error(), "no HOME") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestPSQuoteDoublesEveryQuote(t *testing.T) {
+	// PowerShell treats the curly quotes U+2018-U+201B as single quotes too.
+	if got := psQuote("it's \u2018a\u2019 \u201ab\u201b"); got != "it''s \u2018\u2018a\u2019\u2019 \u201a\u201ab\u201b\u201b" {
+		t.Fatal(got)
 	}
 }
 
@@ -122,19 +184,22 @@ func TestSteamShortcutArtworkAndManifest(t *testing.T) {
 	}
 	defer func() { runCommand = old }()
 	steamRoot := t.TempDir()
-	os.MkdirAll(filepath.Join(steamRoot, "userdata", "10005062", "config"), 0o755)
+	user := filepath.Join(steamRoot, "userdata", "10005062")
+	os.MkdirAll(filepath.Join(user, "config"), 0o755)
+	// A second user proves the hooks write to the user the Destination screen chose.
+	os.MkdirAll(filepath.Join(steamRoot, "userdata", "20005063", "config"), 0o755)
 	os.WriteFile(filepath.Join(install, "trinity.exe"), []byte("x"), 0o755)
 	vr := filepath.Join(t.TempDir(), "SteamVR")
 	os.MkdirAll(filepath.Join(vr, "bin", "win64"), 0o755)
-	tg := New(Options{GOOS: "windows", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot, SteamVRRoot: vr})
-	tg.steamVRRunning = func() bool {
+	tg := New(Options{GOOS: "windows", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot, SteamUser: user, SteamVRRoot: vr})
+	tg.steamVRRunning = func() (bool, error) {
 		// The appconfig.json write follows this check, so the capsule must already be there.
 		if _, err := os.Stat(capsule); err != nil {
 			t.Errorf("capsule not in place before the SteamVR check: %v", err)
 		}
-		return false
+		return false, nil
 	}
-	if err := tg.registerSteamShortcut(func(string) {}); err != nil {
+	if err := tg.registerSteamShortcut(context.Background(), func(string) {}); err != nil {
 		t.Fatal(err)
 	}
 	id, err := tg.ReadAppID(context.Background(), func(string) {})
@@ -176,7 +241,15 @@ func TestSteamShortcutArtworkAndManifest(t *testing.T) {
 	if b, err := os.ReadFile(capsule); err != nil || string(b) != "\x01" {
 		t.Fatalf("capsule %q %v", b, err)
 	}
-	tg.steamVRRunning = func() bool { return true }
+	if m, _ := os.ReadFile(filepath.Join(install, "trinity.vrmanifest")); !strings.Contains(string(m), "trinity.exe") || strings.Contains(string(m), "vrpreferences") {
+		t.Fatalf("the PC manifest must not name a vrpreferences.json the PC zips lack: %s", m)
+	}
+	for _, dir := range []string{filepath.Dir(cfg), filepath.Join(user, "config")} {
+		if parts, _ := filepath.Glob(filepath.Join(dir, "*.part")); len(parts) != 0 {
+			t.Fatalf("temp files left: %v", parts)
+		}
+	}
+	tg.steamVRRunning = func() (bool, error) { return true, nil }
 	if err := tg.RegisterVR(context.Background(), id, art, func(string) {}); err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +269,7 @@ func TestRegisterVRNeedsCapsule(t *testing.T) {
 	install := t.TempDir()
 	steamRoot := t.TempDir()
 	tg := New(Options{GOOS: "windows", InstallDir: install, SteamRoot: steamRoot, SteamVRRoot: t.TempDir()})
-	tg.steamVRRunning = func() bool { return true }
+	tg.steamVRRunning = func() (bool, error) { return true, nil }
 	err := tg.RegisterVR(context.Background(), 1, map[string][]byte{"wide": {2}}, func(string) {})
 	if err == nil || err.Error() != "no artwork for capsule" {
 		t.Fatalf("%v", err)
@@ -220,9 +293,9 @@ func TestSteamRunningBlocksShortcut(t *testing.T) {
 	os.MkdirAll(filepath.Dir(vdf), 0o755)
 	home := t.TempDir()
 	install := filepath.Join(home, "trinity")
-	tg := New(Options{GOOS: "linux", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot})
+	tg := New(Options{GOOS: "linux", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot, SteamUser: filepath.Join(steamRoot, "userdata", "10005062")})
 	tg.home = home
-	tg.steamRunning = func() bool { return true }
+	tg.steamRunning = func() (bool, error) { return true, nil }
 	err := tg.RegisterLaunchEntry(context.Background(), func(string) {})
 	if err == nil || err.Error() != "Steam is running. Close Steam, then press Retry." {
 		t.Fatalf("%v", err)
@@ -230,7 +303,7 @@ func TestSteamRunningBlocksShortcut(t *testing.T) {
 	if _, err := os.Stat(vdf); err == nil {
 		t.Fatal("shortcuts.vdf written while Steam runs")
 	}
-	tg.steamRunning = func() bool { return false }
+	tg.steamRunning = func() (bool, error) { return false, nil }
 	if err := tg.RegisterLaunchEntry(context.Background(), func(string) {}); err != nil {
 		t.Fatal(err)
 	}
@@ -246,6 +319,12 @@ func TestSteamRunningBlocksShortcut(t *testing.T) {
 	}
 }
 
+// exitErr stands in for *exec.ExitError, which only a real process can produce.
+type exitErr int
+
+func (e exitErr) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
+func (e exitErr) ExitCode() int { return int(e) }
+
 func TestSteamRunning(t *testing.T) {
 	old := runCommand
 	defer func() { runCommand = old }()
@@ -254,15 +333,40 @@ func TestSteamRunning(t *testing.T) {
 		got = append([]string{name}, args...)
 		return []byte(`"steam.exe","4321","Console","1","90,000 K"` + "\r\n"), nil
 	}
-	if !New(Options{GOOS: "windows"}).steamRunning() || got[0] != "tasklist" || !strings.Contains(strings.Join(got, " "), "IMAGENAME eq steam.exe") {
-		t.Fatalf("%v", got)
+	if on, err := New(Options{GOOS: "windows"}).steamRunning(); !on || err != nil || got[0] != "tasklist" || !strings.Contains(strings.Join(got, " "), "IMAGENAME eq steam.exe") {
+		t.Fatalf("%v %v %v", on, err, got)
 	}
 	runCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		got = append([]string{name}, args...)
-		return nil, os.ErrNotExist
+		return nil, exitErr(1)
 	}
-	if New(Options{GOOS: "linux"}).steamRunning() || strings.Join(got, " ") != "pgrep -x steam" {
-		t.Fatalf("%v", got)
+	if on, err := New(Options{GOOS: "linux"}).steamRunning(); on || err != nil || strings.Join(got, " ") != "pgrep -x steam" {
+		t.Fatalf("pgrep's no-match exit: %v %v %v", on, err, got)
+	}
+}
+
+func TestFailedProcessCheckStopsTheShortcut(t *testing.T) {
+	old := runCommand
+	defer func() { runCommand = old }()
+	steamRoot := t.TempDir()
+	user := filepath.Join(steamRoot, "userdata", "10005062")
+	for goos, fail := range map[string]error{"windows": errors.New("tasklist is missing"), "linux": exitErr(3)} {
+		runCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			if name == "powershell" {
+				return nil, nil
+			}
+			return nil, fail
+		}
+		home := t.TempDir()
+		tg := New(Options{GOOS: goos, InstallDir: filepath.Join(home, "trinity"), AddToSteam: true, SteamRoot: steamRoot, SteamUser: user})
+		tg.home = home
+		// A check that could not run must not read as "Steam is closed", or Steam would overwrite the new shortcut.
+		if err := tg.RegisterLaunchEntry(context.Background(), func(string) {}); err == nil || !strings.Contains(err.Error(), "Steam is running") {
+			t.Fatalf("%s: %v", goos, err)
+		}
+		if _, err := os.Stat(filepath.Join(user, "config", "shortcuts.vdf")); err == nil {
+			t.Fatalf("%s: shortcuts.vdf written after a failed check", goos)
+		}
 	}
 }
 
@@ -272,7 +376,7 @@ func TestAppConfigUnreadableIsAnError(t *testing.T) {
 	os.MkdirAll(filepath.Dir(cfg), 0o755)
 	os.WriteFile(cfg, []byte("not json"), 0o644)
 	tg := New(Options{GOOS: "linux", InstallDir: t.TempDir(), SteamRoot: steamRoot, SteamVRRoot: "vr"})
-	tg.steamVRRunning = func() bool { return false }
+	tg.steamVRRunning = func() (bool, error) { return false, nil }
 	if err := tg.RegisterVR(context.Background(), 1, map[string][]byte{"capsule": {1}}, func(string) {}); err == nil || !strings.Contains(err.Error(), "not readable JSON") {
 		t.Fatalf("a malformed appconfig.json must not be overwritten: %v", err)
 	}
@@ -290,28 +394,42 @@ func TestSteamVRRunning(t *testing.T) {
 		return []byte("INFO: No tasks are running which match the specified criteria.\r\n"), nil
 	}
 	tg := New(Options{GOOS: "windows"})
-	if tg.steamVRRunning() || got[0] != "tasklist" {
-		t.Fatalf("%v", got)
+	if on, err := tg.steamVRRunning(); on || err != nil || got[0] != "tasklist" {
+		t.Fatalf("%v %v %v", on, err, got)
 	}
 	runCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		return []byte(`"vrserver.exe","1234","Console","1","40,000 K"` + "\r\n"), nil
 	}
-	if !tg.steamVRRunning() {
-		t.Fatal("vrserver.exe listed but not seen")
+	if on, err := tg.steamVRRunning(); !on || err != nil {
+		t.Fatalf("vrserver.exe listed but not seen: %v", err)
 	}
 	runCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		got = append([]string{name}, args...)
 		return nil, nil
 	}
 	tg = New(Options{GOOS: "linux"})
-	if !tg.steamVRRunning() || strings.Join(got, " ") != "pgrep -x vrserver" {
-		t.Fatalf("%v", got)
+	if on, err := tg.steamVRRunning(); !on || err != nil || strings.Join(got, " ") != "pgrep -x vrserver" {
+		t.Fatalf("%v %v %v", on, err, got)
 	}
-	runCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		return nil, os.ErrNotExist
+	for _, fail := range []error{exitErr(2), os.ErrNotExist} {
+		runCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) { return nil, fail }
+		if _, err := tg.steamVRRunning(); err == nil {
+			t.Fatalf("pgrep failure %v read as an answer", fail)
+		}
 	}
-	if tg.steamVRRunning() {
-		t.Fatal("pgrep failure read as running")
+}
+
+func TestFailedVRCheckStopsRegistration(t *testing.T) {
+	old := runCommand
+	defer func() { runCommand = old }()
+	runCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) { return nil, exitErr(2) }
+	steamRoot := t.TempDir()
+	tg := New(Options{GOOS: "linux", InstallDir: t.TempDir(), SteamRoot: steamRoot, SteamVRRoot: "vr"})
+	if err := tg.RegisterVR(context.Background(), 1, map[string][]byte{"capsule": {1}}, func(string) {}); err == nil || !strings.Contains(err.Error(), "SteamVR is running") {
+		t.Fatalf("%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(steamRoot, "config", "appconfig.json")); err == nil {
+		t.Fatal("appconfig.json edited after a failed check")
 	}
 }
 
@@ -408,5 +526,28 @@ func TestPackageMode(t *testing.T) {
 	}
 	if got := packageMode("README.txt", 0o600); got != 0o600 {
 		t.Errorf("%o", got)
+	}
+}
+
+func TestInstallDMGLogsAFailedDetach(t *testing.T) {
+	old := runCommand
+	runCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		switch {
+		case name == "ditto":
+			return nil, os.MkdirAll(args[len(args)-1], 0o755)
+		case name == "hdiutil" && args[0] == "detach":
+			return []byte("resource busy"), exitErr(16)
+		}
+		return nil, nil
+	}
+	defer func() { runCommand = old }()
+	var lines []string
+	tg := New(Options{GOOS: "darwin", InstallDir: t.TempDir()})
+	pkg := &release.Package{Spec: release.Spec{Kind: release.KindDMG}, Raw: []byte("dmg")}
+	if err := tg.PushPackage(context.Background(), pkg, func(l string) { lines = append(lines, l) }); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "resource busy") {
+		t.Fatalf("a failed detach went unlogged: %q", lines)
 	}
 }

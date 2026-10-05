@@ -31,32 +31,49 @@ func Fake(run func(ctx context.Context, name string, args ...string) ([]byte, er
 	return &ADB{path: "adb", runner: run}
 }
 
-// Bundled unpacks the embedded platform-tools adb once per version into the config dir.
+// Bundled unpacks the embedded platform-tools adb, with its Apache notice, once per version into the config dir.
 func Bundled(cfgDir string) (*ADB, error) {
 	files, version, err := bundledFiles()
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(cfgDir, "adb", version)
-	exe := filepath.Join(dir, adbName)
-	if _, err := os.Stat(exe); err != nil {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, err
-		}
-		// adb goes last because its presence marks the extraction complete.
-		for name, data := range files {
-			if name == adbName {
-				continue
-			}
-			if err := os.WriteFile(filepath.Join(dir, name), data, 0o755); err != nil {
-				return nil, err
-			}
-		}
-		if err := os.WriteFile(exe, files[adbName], 0o755); err != nil {
-			return nil, err
-		}
+	exe, err := extract(filepath.Join(cfgDir, "adb", version), files)
+	if err != nil {
+		return nil, err
 	}
 	return &ADB{path: exe}, nil
+}
+
+// extract writes files into dir unless adb is already there; adb goes last because its presence marks the extraction complete.
+func extract(dir string, files map[string][]byte) (string, error) {
+	exe := filepath.Join(dir, adbName)
+	if _, err := os.Stat(exe); err == nil {
+		return exe, nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	names := make([]string, 0, len(files))
+	for name := range files {
+		if name != adbName {
+			names = append(names, name)
+		}
+	}
+	for _, name := range append(names, adbName) {
+		mode := os.FileMode(0o755)
+		if name == "NOTICE.txt" {
+			mode = 0o644
+		}
+		// A rename lands a whole file, so a run killed mid-write never leaves a truncated adb that later runs trust.
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p+".tmp", files[name], mode); err != nil {
+			return "", err
+		}
+		if err := os.Rename(p+".tmp", p); err != nil {
+			return "", err
+		}
+	}
+	return exe, nil
 }
 
 func (a *ADB) run(ctx context.Context, serial string, args ...string) (string, error) {

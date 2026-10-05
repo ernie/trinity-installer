@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
+	"net/http"
 	"strings"
 	"time"
 
@@ -13,8 +16,12 @@ import (
 
 	"github.com/ernie/trinity-installer/internal/frame"
 	"github.com/ernie/trinity-installer/internal/install"
+	"github.com/ernie/trinity-installer/internal/patch"
 	"github.com/ernie/trinity-installer/internal/quake3"
 	"github.com/ernie/trinity-installer/internal/target"
+	"github.com/ernie/trinity-installer/internal/target/android"
+	frametarget "github.com/ernie/trinity-installer/internal/target/frame"
+	"github.com/ernie/trinity-installer/internal/target/local"
 )
 
 // runInstall is a variable so the screen test does not drive a headset.
@@ -26,14 +33,40 @@ var discover = frame.Discover
 // headsetHint fires when discovery has found nothing for long enough that the screen offers the default address.
 var headsetHint = func() <-chan time.Time { return time.After(5 * time.Second) }
 
-// background is a variable so a test can run the connect attempt inline instead of racing the test goroutine.
+// probeFrameLocal finds a Frame through the OS resolver, which answers frame.local on PCs where the mDNS browse finds nothing.
+var probeFrameLocal = func(ctx context.Context) (frame.Headset, bool) {
+	addrs, err := net.DefaultResolver.LookupHost(ctx, "frame.local")
+	if err != nil {
+		return frame.Headset{}, false
+	}
+	d := net.Dialer{Timeout: 2 * time.Second}
+	for _, a := range addrs {
+		conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(a, "32000"))
+		if err == nil {
+			conn.Close()
+			return frame.Headset{Host: "frame.local", Addr: a}, true
+		}
+	}
+	return frame.Headset{}, false
+}
+
+// background is a variable so a test can run the screens' network work inline instead of racing the test goroutine.
 var background = func(f func()) { go f() }
+
+// hintDone runs when the headset hint goroutine is finished with the screen; a variable so a test can wait for it.
+var hintDone = func() {}
 
 func (u *ui) showHeadset() {
 	next := widget.NewButton("Next", nil)
 	tapped := false
 	u.headsetNext = next
-	status := widget.NewLabel("Looking for headsets. The Frame needs Developer Mode on.")
+	intro := "Looking for headsets. The Frame needs Developer Mode on."
+	paired := u.paired()
+	// The devkit service refuses a new key unless the Frame is in pairing mode.
+	if !paired {
+		intro = "On the Frame, open Settings > Developer > Pair new host, then press Next."
+	}
+	status := widget.NewLabel(intro)
 	status.Wrapping = fyne.TextWrapWord
 	u.headsetStatus = status
 	manual := widget.NewEntry()
@@ -58,22 +91,40 @@ func (u *ui) showHeadset() {
 			list.Refresh()
 		})
 	})
-	hint := headsetHint()
+	hint, probe, done := headsetHint(), probeFrameLocal, hintDone
+	// A plain goroutine: inlined through background, this wait would block a test forever on a hint that never fires.
 	go func() {
+		defer done()
 		select {
 		case <-ctx.Done():
 		case <-hint:
+			h, ok := probe(ctx)
 			fyne.Do(func() {
-				if len(u.headsets) > 0 || next.Disabled() || tapped {
+				if ctx.Err() != nil || len(u.headsets) > 0 || next.Disabled() || tapped {
 					return
 				}
-				status.SetText("No headset found yet. Type its address; the Frame's default is frame.local")
+				if ok {
+					u.headsets = append(u.headsets, h)
+					list.Refresh()
+					list.Select(0)
+					return
+				}
+				hint := "No headset found yet. Type its address; the Frame's default is frame.local"
+				if !paired {
+					hint = intro + "\n\n" + hint
+				}
+				status.SetText(hint)
 				if strings.TrimSpace(manual.Text) == "" {
 					manual.SetText("frame.local")
 				}
 			})
 		}
 	}()
+	// Back stays hidden while connecting, since a finishing pair moves on to the Quake III screen.
+	back := widget.NewButton("Back", func() {
+		cancel()
+		u.showTarget()
+	})
 	next.OnTapped = func() {
 		h := frame.Headset{Host: strings.TrimSpace(manual.Text)}
 		if selected >= 0 {
@@ -85,6 +136,7 @@ func (u *ui) showHeadset() {
 		}
 		tapped = true
 		next.Disable()
+		back.Hide()
 		status.SetText("Connecting to " + h.Host + "...")
 		background(func() {
 			err := u.pair(context.Background(), h, func() {
@@ -94,6 +146,7 @@ func (u *ui) showHeadset() {
 				if err != nil {
 					status.SetText(err.Error())
 					next.Enable()
+					back.Show()
 					return
 				}
 				cancel()
@@ -101,11 +154,17 @@ func (u *ui) showHeadset() {
 			})
 		})
 	}
-	u.show(container.NewBorder(status, container.NewVBox(manual, next), nil, nil, list))
+	u.show(container.NewBorder(status, container.NewVBox(manual, container.NewHBox(back, next)), nil, nil, list))
 }
 
 func (u *ui) showQuake3() {
-	u.quake3Next = widget.NewButton("Next", func() { u.showInstall() })
+	u.quake3Next = widget.NewButton("Next", func() {
+		if u.needsEULA() {
+			u.showEULA()
+		} else {
+			u.showInstall()
+		}
+	})
 	u.quake3Next.Disable()
 	u.rows = nil
 	if dir, ok := quake3.DetectSteamInstall(); ok && u.quake3Dir == "" {
@@ -144,8 +203,56 @@ func (u *ui) renderValidation() {
 			u.quake3Next.Enable()
 		}
 	}
-	back := widget.NewButton("Back", func() { u.showHeadset() })
+	back := widget.NewButton("Back", func() { u.backFromQuake3() })
 	u.show(container.NewBorder(nil, container.NewHBox(back, u.quake3Next), nil, nil, container.NewVBox(body...)))
+}
+
+func (u *ui) backFromQuake3() {
+	switch u.target.(type) {
+	case *frametarget.Target:
+		u.showHeadset()
+	case *android.Target:
+		u.showDevice()
+	case *local.Target:
+		u.showPC()
+	default:
+		u.showTarget()
+	}
+}
+
+// needsEULA reports whether the install fetches id's 1.32 patch files, whose license the user must accept first.
+func (u *ui) needsEULA() bool { return len(u.validation.NeededPatch()) > 0 }
+
+// fetchPatchSet downloads and opens the 1.32 patch zip once per session.
+func (u *ui) fetchPatchSet(ctx context.Context) error {
+	if !u.needsEULA() || u.patchSet != nil {
+		return nil
+	}
+	if !u.eulaAccepted {
+		return errors.New("the 1.32 patch license has not been accepted; go Back and accept it")
+	}
+	u.logf("Downloading the 1.32 patch")
+	last := int64(0)
+	raw, err := fetchPatch(ctx, &http.Client{Timeout: 10 * time.Minute}, patch.ZipURL, func(done, total int64) {
+		if done-last < 8<<20 && done != total {
+			return
+		}
+		last = done
+		if total < 0 {
+			u.logf("downloaded %d MB", done>>20)
+		} else {
+			u.logf("downloaded %d of %d MB", done>>20, total>>20)
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("downloading the 1.32 patch: %w", err)
+	}
+	set, err := patch.OpenSet(raw)
+	if err != nil {
+		return fmt.Errorf("downloading the 1.32 patch: %w", err)
+	}
+	u.patchSet = set
+	return nil
 }
 
 func (u *ui) showInstall() {
@@ -158,29 +265,44 @@ func (u *ui) showInstall() {
 		u.show(container.NewBorder(nil, widget.NewButton("Back", func() { u.showQuake3() }), nil, nil, msg))
 		return
 	}
-	rows := container.NewVBox()
 	for _, step := range u.plan {
-		l := widget.NewLabel("    " + step.String())
-		u.rows = append(u.rows, l)
-		rows.Add(l)
+		u.rows = append(u.rows, "    "+step.String())
 	}
+	// One label for all steps keeps them single spaced, so nine rows and the log fit the window.
+	u.rowsView = widget.NewLabel(strings.Join(u.rows, "\n"))
+	rows := u.rowsView
 	u.logView = widget.NewMultiLineEntry()
 	u.logView.Wrapping = fyne.TextWrapBreak
 	retry := widget.NewButton("Retry", nil)
 	retry.Hide()
-	u.show(container.NewBorder(rows, retry, nil, nil, u.logView))
+	// Back appears after any failure, so a step that cannot succeed (no Steam user, say) never strands the user on Retry.
+	back := widget.NewButton("Back", func() { u.showQuake3() })
+	back.Hide()
+	u.installRetry, u.installBack = retry, back
+	u.show(container.NewBorder(rows, container.NewHBox(back, retry), nil, nil, u.logView))
 	run := runInstall
 	var start func(from int)
 	start = func(from int) {
 		retry.Hide()
-		go func() {
+		back.Hide()
+		background(func() {
+			if err := u.fetchPatchSet(context.Background()); err != nil {
+				u.logf("%s; log: %s", err, u.logPath())
+				fyne.Do(func() {
+					retry.OnTapped = func() { start(from) }
+					retry.Show()
+					back.Show()
+				})
+				return
+			}
 			err := run(context.Background(), u.target, u.plan, u.installOptions(), from, func(p install.Progress) {
 				if p.Line != "" {
 					u.logf("%s", p.Line)
 				}
 				fyne.Do(func() {
 					mark := map[install.State]string{install.Waiting: "    ", install.Running: ">>  ", install.Done: "OK  ", install.Failed: "!!  "}[p.State]
-					u.rows[p.Index].SetText(mark + p.Step.String())
+					u.rows[p.Index] = mark + p.Step.String()
+					u.rowsView.SetText(strings.Join(u.rows, "\n"))
 				})
 			})
 			fyne.Do(func() {
@@ -193,11 +315,12 @@ func (u *ui) showInstall() {
 					u.logf("failed at %s; log: %s", u.plan[failed], u.logPath())
 					retry.OnTapped = func() { start(failed) }
 					retry.Show()
+					back.Show()
 					return
 				}
 				u.showDone()
 			})
-		}()
+		})
 	}
 	start(0)
 }

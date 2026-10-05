@@ -3,6 +3,8 @@ package adb
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -27,9 +29,18 @@ func TestCommandsUseSerial(t *testing.T) {
 	}
 	defer func() { runCommand = old }()
 	a := &ADB{path: "/x/adb"}
-	a.Install(context.Background(), "S1", "/tmp/t.apk")
-	a.Push(context.Background(), "S1", "/tmp/pak0.pk3", "/sdcard/Trinity/baseq3/pak0.pk3")
-	a.Shell(context.Background(), "S1", "df -k /sdcard")
+	if err := a.Install(context.Background(), "S1", "/tmp/t.apk"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Push(context.Background(), "S1", "/tmp/pak0.pk3", "/sdcard/Trinity/baseq3/pak0.pk3"); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := a.Shell(context.Background(), "S1", "df -k /sdcard"); err != nil || out != "ok" {
+		t.Fatalf("%q %v", out, err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("%v", got)
+	}
 	for _, c := range got {
 		if c[0] != "/x/adb" || c[1] != "-s" || c[2] != "S1" {
 			t.Fatalf("%v", c)
@@ -67,6 +78,43 @@ func TestBundled(t *testing.T) {
 	}
 	if _, err := os.Stat(a.path); err != nil || !strings.HasPrefix(a.path, dir) {
 		t.Fatalf("%s: %v", a.path, err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(a.path), "NOTICE.txt")); err != nil {
+		t.Fatalf("the Apache notice was not extracted beside adb: %v", err)
+	}
+}
+
+func TestBundleCarriesTheNotice(t *testing.T) {
+	if !slices.Contains(bundledNames, "NOTICE.txt") || !slices.Contains(bundledNames, adbName) {
+		t.Fatalf("%v", bundledNames)
+	}
+}
+
+func TestExtractReplacesAHalfWrittenADB(t *testing.T) {
+	dir := t.TempDir()
+	// An earlier run that died mid-write leaves only a temp file, which must not count as an extracted adb.
+	os.WriteFile(filepath.Join(dir, adbName+".tmp"), []byte("ad"), 0o755)
+	files := map[string][]byte{adbName: []byte("adb binary"), "NOTICE.txt": []byte("Apache")}
+	exe, err := extract(dir, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(exe); err != nil || string(b) != "adb binary" || exe != filepath.Join(dir, adbName) {
+		t.Fatalf("%s %q %v", exe, b, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "NOTICE.txt")); string(b) != "Apache" {
+		t.Fatalf("notice %q", b)
+	}
+	if tmps, _ := filepath.Glob(filepath.Join(dir, "*.tmp")); len(tmps) != 0 {
+		t.Fatalf("temp files left: %v", tmps)
+	}
+	// A complete adb is trusted and left alone.
+	files[adbName] = []byte("newer")
+	if _, err := extract(dir, files); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "adb binary" {
+		t.Fatalf("an extracted adb was rewritten: %q", b)
 	}
 }
 

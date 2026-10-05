@@ -1,6 +1,7 @@
 package local
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,19 +21,31 @@ import (
 type Target struct {
 	opts           Options
 	home           string
+	homeErr        error
 	appID          uint32
-	steamVRRunning func() bool
-	steamRunning   func() bool
+	steamVRRunning func() (bool, error)
+	steamRunning   func() (bool, error)
 }
 
 func New(o Options) *Target {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
 	return &Target{
 		opts:           o,
 		home:           home,
-		steamVRRunning: func() bool { return processRunning(o.GOOS, "vrserver") },
-		steamRunning:   func() bool { return processRunning(o.GOOS, "steam") },
+		homeErr:        err,
+		steamVRRunning: func() (bool, error) { return processRunning(o.GOOS, "vrserver") },
+		steamRunning:   func() (bool, error) { return processRunning(o.GOOS, "steam") },
 	}
+}
+
+func (t *Target) homeDir() (string, error) {
+	if t.home != "" {
+		return t.home, nil
+	}
+	if t.homeErr != nil {
+		return "", fmt.Errorf("finding your home folder: %w", t.homeErr)
+	}
+	return "", errors.New("finding your home folder: it is not set")
 }
 
 func (t *Target) Name() string {
@@ -52,7 +65,7 @@ func (t *Target) Asset() release.Spec {
 func (t *Target) Reconnect(context.Context) error { return nil }
 
 func (t *Target) steamShortcut() bool {
-	return t.opts.GOOS != "darwin" && t.opts.AddToSteam && t.opts.SteamRoot != ""
+	return t.opts.GOOS != "darwin" && t.opts.AddToSteam && t.opts.SteamRoot != "" && t.opts.SteamUser != ""
 }
 
 func (t *Target) Applicable(context.Context) ([]target.Step, error) {
@@ -130,7 +143,8 @@ func (t *Target) exe() string {
 	if t.opts.GOOS == "windows" {
 		return filepath.Join(t.opts.InstallDir, "trinity.exe")
 	}
-	return filepath.Join(t.opts.InstallDir, "trinity")
+	// path, not filepath: Linux paths keep their slashes even when a test builds them on Windows.
+	return path.Join(t.opts.InstallDir, "trinity")
 }
 
 func (t *Target) RegisterLaunchEntry(ctx context.Context, log func(string)) error {
@@ -141,10 +155,14 @@ func (t *Target) RegisterLaunchEntry(ctx context.Context, log func(string)) erro
 		return nil
 	}
 	// Steam rewrites shortcuts.vdf from memory when it exits, which would drop a shortcut written now.
-	if t.steamRunning() {
+	running, err := t.steamRunning()
+	if err != nil {
+		return fmt.Errorf("could not tell whether Steam is running: %w", err)
+	}
+	if running {
 		return errors.New("Steam is running. Close Steam, then press Retry.")
 	}
-	return t.registerSteamShortcut(log)
+	return t.registerSteamShortcut(ctx, log)
 }
 
 func (t *Target) registerDesktopEntry(ctx context.Context, log func(string)) error {
@@ -157,19 +175,8 @@ func (t *Target) registerDesktopEntry(ctx context.Context, log func(string)) err
 	return nil
 }
 
-func (t *Target) shortcutsPath() (string, error) {
-	user, err := steam.SteamUserData(t.opts.SteamRoot)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(user, "config", "shortcuts.vdf"), nil
-}
-
-func (t *Target) registerSteamShortcut(log func(string)) error {
-	p, err := t.shortcutsPath()
-	if err != nil {
-		return err
-	}
+func (t *Target) registerSteamShortcut(ctx context.Context, log func(string)) error {
+	p := filepath.Join(t.opts.SteamUser, "config", "shortcuts.vdf")
 	old, err := os.ReadFile(p)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -178,10 +185,7 @@ func (t *Target) registerSteamShortcut(log func(string)) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(p, out, 0o644); err != nil {
+	if err := writeAtomic(ctx, p, out); err != nil {
 		return err
 	}
 	t.appID = id
@@ -197,11 +201,7 @@ func (t *Target) ReadAppID(context.Context, func(string)) (uint32, error) {
 }
 
 func (t *Target) InstallArtwork(ctx context.Context, appID uint32, art map[string][]byte, log func(string)) error {
-	user, err := steam.SteamUserData(t.opts.SteamRoot)
-	if err != nil {
-		return err
-	}
-	grid := filepath.Join(user, "config", "grid")
+	grid := filepath.Join(t.opts.SteamUser, "config", "grid")
 	if err := os.MkdirAll(grid, 0o755); err != nil {
 		return err
 	}
@@ -229,10 +229,14 @@ func (t *Target) RegisterVR(ctx context.Context, appID uint32, art map[string][]
 	}
 	manifest := filepath.Join(t.opts.InstallDir, "trinity.vrmanifest")
 	key := map[string]string{"windows": "binary_path_windows", "linux": "binary_path_linux"}[t.opts.GOOS]
-	if err := os.WriteFile(manifest, steam.Manifest(t.opts.InstallDir, filepath.Base(t.exe()), appID, key), 0o644); err != nil {
+	if err := os.WriteFile(manifest, steam.Manifest(t.opts.InstallDir, filepath.Base(t.exe()), appID, key, ""), 0o644); err != nil {
 		return err
 	}
-	if t.steamVRRunning() {
+	running, err := t.steamVRRunning()
+	if err != nil {
+		return fmt.Errorf("could not tell whether SteamVR is running: %w", err)
+	}
+	if running {
 		name, args, err := steam.VrcmdArgs(t.opts.SteamVRRoot, t.opts.GOOS, manifest)
 		if err != nil {
 			return err
@@ -243,11 +247,11 @@ func (t *Target) RegisterVR(ctx context.Context, appID uint32, art map[string][]
 		log("SteamVR registered the manifest")
 		return nil
 	}
-	return t.listManifest(manifest, log)
+	return t.listManifest(ctx, manifest, log)
 }
 
 // listManifest edits appconfig.json, which SteamVR reads at startup; with vrserver down nothing can clobber the edit.
-func (t *Target) listManifest(manifest string, log func(string)) error {
+func (t *Target) listManifest(ctx context.Context, manifest string, log func(string)) error {
 	cfg := filepath.Join(t.opts.SteamRoot, "config", "appconfig.json")
 	doc := map[string]json.RawMessage{}
 	var paths []string
@@ -276,26 +280,40 @@ func (t *Target) listManifest(manifest string, log func(string)) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(cfg, out, 0o644); err != nil {
+	if err := writeAtomic(ctx, cfg, out); err != nil {
 		return err
 	}
 	log("manifest listed for SteamVR's next start")
 	return nil
 }
 
-func processRunning(goos, name string) bool {
+// writeAtomic swaps a finished temp file into place, so Steam never reads a half-written shortcuts.vdf or appconfig.json.
+func writeAtomic(ctx context.Context, p string, b []byte) error {
+	return store.Local().Put(ctx, p, bytes.NewReader(b), int64(len(b)), 0o644)
+}
+
+// processRunning reports a check that could not run as an error, since reading it as "not running" would let Steam clobber the edit.
+func processRunning(goos, name string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	switch goos {
 	case "windows":
 		out, err := runCommand(ctx, "tasklist", "/NH", "/FI", "IMAGENAME eq "+name+".exe")
-		return err == nil && strings.Contains(strings.ToLower(string(out)), name+".exe")
+		if err != nil {
+			return false, fmt.Errorf("tasklist: %w: %s", err, out)
+		}
+		return strings.Contains(strings.ToLower(string(out)), name+".exe"), nil
 	case "linux":
-		_, err := runCommand(ctx, "pgrep", "-x", name)
-		return err == nil
+		out, err := runCommand(ctx, "pgrep", "-x", name)
+		if err == nil {
+			return true, nil
+		}
+		// pgrep exits 1 for "no match" and above 1 for a real failure.
+		var exit interface{ ExitCode() int }
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+			return false, nil
+		}
+		return false, fmt.Errorf("pgrep: %w: %s", err, out)
 	}
-	return false
+	return false, nil
 }

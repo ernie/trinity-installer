@@ -3,39 +3,50 @@ package steam
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"hash/crc32"
 	"sort"
 	"strconv"
 	"strings"
 )
 
-func EncodeBinaryVDF(m map[string]any) []byte {
+func EncodeBinaryVDF(m map[string]any) ([]byte, error) {
 	var b bytes.Buffer
-	encodeMap(&b, m)
+	if err := encodeMap(&b, m); err != nil {
+		return nil, err
+	}
 	b.WriteByte(vdfEnd)
-	return b.Bytes()
+	return b.Bytes(), nil
 }
 
-func encodeMap(b *bytes.Buffer, m map[string]any) {
+// vdfKeyLess orders numeric keys (shortcut indexes) numerically ahead of names, which sort as strings.
+func vdfKeyLess(a, b string) bool {
+	na, ea := strconv.Atoi(a)
+	nb, eb := strconv.Atoi(b)
+	switch {
+	case ea == nil && eb == nil:
+		return na < nb
+	case ea == nil || eb == nil:
+		return ea == nil
+	}
+	return a < b
+}
+
+func encodeMap(b *bytes.Buffer, m map[string]any) error {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		ni, ei := strconv.Atoi(keys[i])
-		nj, ej := strconv.Atoi(keys[j])
-		if ei == nil && ej == nil {
-			return ni < nj
-		}
-		return keys[i] < keys[j]
-	})
+	sort.Slice(keys, func(i, j int) bool { return vdfKeyLess(keys[i], keys[j]) })
 	for _, k := range keys {
 		switch v := m[k].(type) {
 		case map[string]any:
 			b.WriteByte(vdfMap)
 			b.WriteString(k)
 			b.WriteByte(0)
-			encodeMap(b, v)
+			if err := encodeMap(b, v); err != nil {
+				return err
+			}
 			b.WriteByte(vdfEnd)
 		case string:
 			b.WriteByte(vdfString)
@@ -48,8 +59,11 @@ func encodeMap(b *bytes.Buffer, m map[string]any) {
 			b.WriteString(k)
 			b.WriteByte(0)
 			binary.Write(b, binary.LittleEndian, v)
+		default:
+			return fmt.Errorf("binary VDF has no type for %q (%T)", k, v)
 		}
 	}
+	return nil
 }
 
 // ShortcutAppID is Steam's own derivation for non-Steam shortcuts, so the grid art can be named before Steam restarts.
@@ -77,20 +91,24 @@ func AppendShortcut(vdf []byte, s Shortcut, startDir string) ([]byte, uint32, er
 		root["shortcuts"] = list
 	}
 	want := normalizeExe(s.Exe)
+	id := ShortcutAppID(s.Exe, s.AppName)
 	next := 0
 	for k, v := range list {
 		if e, ok := v.(map[string]any); ok {
 			if exe, _ := e["Exe"].(string); normalizeExe(exe) == want {
-				if id, ok := e["appid"].(int32); ok {
-					return vdf, uint32(id), nil
+				if have, ok := e["appid"].(int32); ok {
+					return vdf, uint32(have), nil
 				}
+				// Stamping the matching entry keeps one shortcut and gives the grid art a known id.
+				e["appid"] = int32(id)
+				out, err := EncodeBinaryVDF(root)
+				return out, id, err
 			}
 		}
 		if n, err := strconv.Atoi(k); err == nil && n >= next {
 			next = n + 1
 		}
 	}
-	id := ShortcutAppID(s.Exe, s.AppName)
 	if startDir == "" {
 		startDir = s.Exe[:max(strings.LastIndexAny(s.Exe, "/\\"), 0)]
 	}
@@ -100,5 +118,6 @@ func AppendShortcut(vdf []byte, s Shortcut, startDir string) ([]byte, uint32, er
 		"AllowOverlay": int32(1), "OpenVR": int32(0), "Devkit": int32(0), "DevkitGameID": "", "DevkitOverrideAppID": int32(0),
 		"LastPlayTime": int32(0), "FlatpakAppID": "", "sortas": "", "tags": map[string]any{},
 	}
-	return EncodeBinaryVDF(root), id, nil
+	out, err := EncodeBinaryVDF(root)
+	return out, id, err
 }

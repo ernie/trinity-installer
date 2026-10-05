@@ -1,6 +1,8 @@
 package main
 
 import (
+	"runtime"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 )
@@ -19,6 +21,7 @@ func main() {
 	w := a.NewWindow(versionString(version))
 	w.Resize(fyne.NewSize(460, 520))
 	u := newUI(a, w, configDir())
-	u.showHeadset()
+	u.goos = runtime.GOOS
+	u.showTarget()
 	w.ShowAndRun()
 }

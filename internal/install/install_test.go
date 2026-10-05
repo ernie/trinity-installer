@@ -174,3 +174,133 @@ func TestFetchRejectsBadAsset(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestPatchStepSaysWhenNothingWasDownloaded(t *testing.T) {
+	ft := newFakeTarget(target.PushPatch)
+	plan, _ := target.Plan(context.Background(), ft)
+	report, events := collect()
+	if err := Run(context.Background(), ft, plan, options(t), 0, report); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range *events {
+		if e.Step == target.PushPatch && e.Line == "the 1.32 patch files came from your Quake III folder" {
+			return
+		}
+	}
+	t.Fatalf("the patch row turned OK without a word: %+v", *events)
+}
+
+func TestRetryResumesWithTheCarriedAppID(t *testing.T) {
+	ft := newFakeTarget(target.ReadAppID, target.RegisterVR, target.InstallArtwork)
+	plan, _ := target.Plan(context.Background(), ft)
+	opts := options(t)
+	opts.Carry = &Carry{}
+	ft.Fail["vr:42"] = errors.New("SteamVR said no")
+	report, _ := collect()
+	err := Run(context.Background(), ft, plan, opts, 0, report)
+	var se *StepError
+	if !errors.As(err, &se) || se.Step != target.RegisterVR {
+		t.Fatalf("%v", err)
+	}
+	ft.appID = 7 // a re-read would now hand back a different id
+	if err := Run(context.Background(), ft, plan, opts, se.Index, report); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(ft.calls, ","); got != "prepare,package,appid,vr:42,vr:42,art:42:2" {
+		t.Fatalf("%s", got)
+	}
+}
+
+func TestRetryResumesWithTheCarriedPaksDir(t *testing.T) {
+	ft := newFakeTarget(target.PushPatch)
+	plan, _ := target.Plan(context.Background(), ft)
+	opts := options(t)
+	opts.Carry = &Carry{}
+	set, err := patch.OpenSet(zipOf("baseq3/pak1.pk3", "missionpack/pak1.pk3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.Patch, opts.PatchRels = set, []string{"missionpack/pak1.pk3"}
+	ft.st.failPut["/dest/missionpack/pak1.pk3"] = errors.New("link dropped")
+	report, _ := collect()
+	err = Run(context.Background(), ft, plan, opts, 0, report)
+	var se *StepError
+	if !errors.As(err, &se) || se.Step != target.PushPatch {
+		t.Fatalf("%v", err)
+	}
+	ft.paksDir = "/elsewhere" // a re-run PrepareDestination would now answer differently
+	if err := Run(context.Background(), ft, plan, opts, se.Index, report); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ft.st.files["/dest/missionpack/pak1.pk3"]; !ok {
+		t.Fatalf("retry did not write under the carried /dest:\n%s", ft.st.dump())
+	}
+}
+
+func TestRunRefusesARetryWithoutState(t *testing.T) {
+	ft := newFakeTarget(target.RegisterLaunchEntry)
+	plan, _ := target.Plan(context.Background(), ft)
+	report, _ := collect()
+	opts := options(t)
+	if err := Run(context.Background(), ft, plan, opts, 3, report); err == nil {
+		t.Fatal("a retry without carried state ran on an empty state")
+	}
+	opts.Carry = &Carry{}
+	if err := Run(context.Background(), ft, plan, opts, 3, report); err == nil {
+		t.Fatal("a retry with an unused carry ran on an empty state")
+	}
+	for _, from := range []int{len(plan), -1} {
+		if err := Run(context.Background(), ft, plan, options(t), from, report); err == nil {
+			t.Fatalf("from %d accepted", from)
+		}
+	}
+	if len(ft.calls) != 0 || ft.reconnects != 0 {
+		t.Fatalf("refused runs touched the target: %v, %d reconnects", ft.calls, ft.reconnects)
+	}
+}
+
+func TestPaksRepushADifferentSizeFile(t *testing.T) {
+	ft := newFakeTarget()
+	plan, _ := target.Plan(context.Background(), ft)
+	ft.st.files["/dest/baseq3/pak0.pk3"] = []byte("truncated")
+	report, _ := collect()
+	if err := Run(context.Background(), ft, plan, options(t), 0, report); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(ft.st.files["/dest/baseq3/pak0.pk3"]); got != "pak baseq3/pak0.pk3" {
+		t.Fatalf("a different-size pak was kept: %q", got)
+	}
+}
+
+func TestCancelInsidePushAllWritesNothing(t *testing.T) {
+	ft := newFakeTarget()
+	plan, _ := target.Plan(context.Background(), ft)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	puts := -1
+	ft.st.onFreeSpace = func() {
+		puts = ft.st.puts
+		cancel()
+	}
+	report, _ := collect()
+	err := Run(ctx, ft, plan, options(t), 0, report)
+	var se *StepError
+	if !errors.As(err, &se) || se.Step != target.PushRetailPaks || !errors.Is(err, context.Canceled) {
+		t.Fatalf("%v", err)
+	}
+	if ft.st.puts != puts {
+		t.Fatalf("%d puts after the cancel", ft.st.puts-puts)
+	}
+}
+
+func TestFakePushPackageReportsPutErrors(t *testing.T) {
+	ft := newFakeTarget()
+	plan, _ := target.Plan(context.Background(), ft)
+	ft.st.failPut["/dest/trinity"] = errors.New("disk full")
+	report, _ := collect()
+	err := Run(context.Background(), ft, plan, options(t), 0, report)
+	var se *StepError
+	if !errors.As(err, &se) || se.Step != target.PushPackage {
+		t.Fatalf("%v", err)
+	}
+}
