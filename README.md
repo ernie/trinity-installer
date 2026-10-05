@@ -36,6 +36,8 @@ The installer bundles `adb` from Android platform-tools under the Apache 2.0 lic
 
 ## Building locally
 
+The toolchain is Go 1.27, pinned in `mise.toml`; `mise install` fetches it. go.mod also names the toolchain, so an older `go` on the path downloads it on first use.
+
 The release workflow packages the Windows build with `fyne package`, which hides the console. A plain `go build` shows one; build the Windows exe with:
 
 ```
