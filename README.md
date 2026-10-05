@@ -27,3 +27,12 @@ On Windows and Linux, when Steam (and SteamVR) is installed and the box is check
 ## Third-party software
 
 The installer bundles `adb` from Android platform-tools under the Apache 2.0 license. Its notice is extracted next to adb under the installer's config folder (`TrinityInstaller/adb/<version>/NOTICE.txt`) and is in Google's platform-tools download. Builds embed both after `go run ./tools/fetchadb -out internal/adb/bin`, which CI and release builds run before building.
+
+## Building locally
+
+The release workflow packages the Windows build with `fyne package`, which hides the console. A plain `go build` shows one; build the Windows exe with:
+
+```
+go run ./tools/fetchadb -out internal/adb/bin
+go build -ldflags "-H windowsgui -X main.version=dev" -o build/trinity-installer.exe ./cmd/trinity-installer
+```
