@@ -26,6 +26,14 @@ import (
 // runInstall is a variable so the screen test does not drive a headset.
 var runInstall = install.Run
 
+// relaunchSteam is a variable so the screen tests do not start the PC's Steam.
+var relaunchSteam = func(ctx context.Context, c target.SteamCloser, log func(string)) error {
+	return c.RelaunchSteam(ctx, log)
+}
+
+// oneLine collapses an error onto the single failure line under the steps.
+func oneLine(err error) string { return strings.Join(strings.Fields(err.Error()), " ") }
+
 // discover is a variable so the screen test does not start mDNS: the test driver runs fyne.Do off the test goroutine and races layout.
 var discover = frame.Discover
 
@@ -273,13 +281,29 @@ func (u *ui) showInstall() {
 	u.rowsView = widget.NewLabel(strings.Join(u.rows, "\n"))
 	caption := widget.NewLabel("Installing Trinity to " + u.target.Name() + ":")
 	caption.Wrapping = fyne.TextWrapWord
-	rows := container.NewVBox(caption, u.rowsView)
+	failure := widget.NewLabel("")
+	failure.Wrapping = fyne.TextWrapWord
+	failure.Hide()
+	u.installFailure = failure
+	rows := container.NewVBox(caption, u.rowsView, failure)
 	u.logView = widget.NewMultiLineEntry()
 	u.logView.Wrapping = fyne.TextWrapBreak
 	retry := widget.NewButton("Retry", nil)
 	retry.Hide()
+	// relaunch returns the Steam start owed to the user when the shortcut step closed Steam, so it is started again when the install is done or left.
+	relaunch := func() func() {
+		sc, ok := u.target.(target.SteamCloser)
+		if !ok || !sc.SteamClosed() {
+			return func() {}
+		}
+		// RelaunchSteam logs its own failure, and a Steam that will not start never fails the install.
+		return func() { relaunchSteam(context.Background(), sc, func(l string) { u.logf("%s", l) }) }
+	}
 	// Back appears after any failure, so a step that cannot succeed (no Steam user, say) never strands the user on Retry.
-	back := widget.NewButton("Back", func() { u.showQuake3() })
+	back := widget.NewButton("Back", func() {
+		background(relaunch())
+		u.showQuake3()
+	})
 	back.Hide()
 	u.installRetry, u.installBack = retry, back
 	u.show(container.NewBorder(rows, buttonRow(back, retry), nil, nil, u.logView))
@@ -288,10 +312,13 @@ func (u *ui) showInstall() {
 	start = func(from int) {
 		retry.Hide()
 		back.Hide()
+		failure.Hide()
 		background(func() {
 			if err := u.fetchPatchSet(context.Background()); err != nil {
 				u.logf("%s; log: %s", err, u.logPath())
 				fyne.Do(func() {
+					failure.SetText(oneLine(err))
+					failure.Show()
 					retry.OnTapped = func() { start(from) }
 					retry.Show()
 					back.Show()
@@ -308,13 +335,20 @@ func (u *ui) showInstall() {
 					u.rowsView.SetText(strings.Join(u.rows, "\n"))
 				})
 			})
+			if err == nil {
+				relaunch()()
+			}
 			fyne.Do(func() {
 				if err != nil {
 					failed := from
 					var se *install.StepError
 					if errors.As(err, &se) {
 						failed = se.Index
+						failure.SetText(se.Step.String() + ": " + oneLine(se.Err))
+					} else {
+						failure.SetText(oneLine(err))
 					}
+					failure.Show()
 					u.logf("failed at %s; log: %s", u.plan[failed], u.logPath())
 					retry.OnTapped = func() { start(failed) }
 					retry.Show()

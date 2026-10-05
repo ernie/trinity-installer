@@ -33,6 +33,13 @@ type Target struct {
 	rec          installRecord // what this install wrote, so the uninstaller removes exactly that
 	startMenuLnk string        // the shortcuts this run wrote; "" when not asked for or not written
 	desktopLnk   string
+	// wait, detach and spawn are seams so tests neither sleep nor start programs.
+	wait            func(time.Duration) <-chan time.Time
+	detach          func(cmdLine, dir string) error
+	spawn           func(name string, args ...string) error
+	steamRelaunched bool
+	closedSteam     bool // the installer closed Steam and owes the user a relaunch
+	entryWritten    bool // the Settings > Apps entry exists, so later steps keep its size current
 }
 
 func New(o Options) *Target {
@@ -44,6 +51,9 @@ func New(o Options) *Target {
 		steamVRRunning: func() (bool, error) { return processRunning(o.GOOS, "vrserver") },
 		steamRunning:   func() (bool, error) { return processRunning(o.GOOS, "steam") },
 		registry:       defaultRegistry(),
+		wait:           time.After,
+		detach:         startDetached,
+		spawn:          spawnDetached,
 	}
 }
 
@@ -107,13 +117,17 @@ func (t *Target) Done() string {
 	if t.opts.Desktop {
 		where = append(where, "the Desktop")
 	}
+	fromSteam := "Steam the next time you start it"
+	if t.steamRelaunched {
+		fromSteam = "Steam"
+	}
 	switch {
 	case len(where) > 0 && t.steamShortcut():
-		return "Trinity is " + state + ". Launch it from " + strings.Join(where, " and ") + ", and from Steam the next time you start it."
+		return "Trinity is " + state + ". Launch it from " + strings.Join(where, " and ") + ", and from " + fromSteam + "."
 	case len(where) > 0:
 		return "Trinity is " + state + ". Launch it from " + strings.Join(where, " and ") + "."
 	case t.steamShortcut():
-		return "Trinity is " + state + ". Launch it from Steam the next time you start it."
+		return "Trinity is " + state + ". Launch it from " + fromSteam + "."
 	}
 	return "Trinity is " + state + " in " + t.opts.InstallDir + "."
 }
@@ -175,6 +189,11 @@ func (t *Target) PushPackage(ctx context.Context, pkg *release.Package, log func
 		if err := t.copyUninstaller(ctx, log); err != nil {
 			return err
 		}
+		if err := t.saveRecord(ctx); err != nil {
+			return err
+		}
+		// The entry goes in as soon as the files do, so an install that stops later can still be removed.
+		return t.writeEntry(log)
 	}
 	return t.saveRecord(ctx)
 }
@@ -200,18 +219,28 @@ func (t *Target) RegisterLaunchEntry(ctx context.Context, log func(string)) erro
 	if err := t.registerDesktopEntry(ctx, log); err != nil {
 		return err
 	}
-	if t.steamShortcut() {
-		// Steam rewrites shortcuts.vdf from memory when it exits, which would drop a shortcut written now.
-		running, err := t.steamRunning()
-		if err != nil {
-			return fmt.Errorf("could not tell whether Steam is running: %w", err)
-		}
-		if running {
-			return errors.New("Steam is running. Close Steam, then press Retry.")
-		}
-		if err := t.registerSteamShortcut(ctx, log); err != nil {
+	// Record the shortcuts before the Steam part, so a Steam that will not close still leaves them uninstallable.
+	if t.opts.GOOS == "windows" {
+		if err := t.registerUninstall(ctx, log); err != nil {
 			return err
 		}
+	}
+	if !t.steamShortcut() {
+		return nil
+	}
+	// Steam rewrites shortcuts.vdf from memory when it exits, which would drop a shortcut written while it runs.
+	running, err := t.steamRunning()
+	if err != nil {
+		return fmt.Errorf("could not tell whether Steam is running: %v. %w", err, ErrSteamRunning)
+	}
+	if running {
+		log("closing Steam")
+		if err := t.CloseSteam(ctx, log); err != nil {
+			return fmt.Errorf("Steam is running and did not close: %v. %w", err, ErrSteamRunning)
+		}
+	}
+	if err := t.registerSteamShortcut(ctx, log); err != nil {
+		return err
 	}
 	if t.opts.GOOS == "windows" {
 		return t.registerUninstall(ctx, log)

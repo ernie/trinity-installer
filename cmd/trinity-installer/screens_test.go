@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -956,6 +959,9 @@ func TestPCScreenPrefillsTheExistingInstall(t *testing.T) {
 	t.Cleanup(func() { ui.logFile.Close() })
 	ui.goos = "windows"
 	existing := filepath.Join(t.TempDir(), "Games", "Trinity")
+	// The note needs the folder's install record, not just the Apps entry.
+	os.MkdirAll(existing, 0o755)
+	os.WriteFile(filepath.Join(existing, "trinity-install.json"), []byte("{}"), 0o644)
 	if err := local.SetInstalledDirForTest(existing); err != nil {
 		t.Fatal(err)
 	}
@@ -1023,5 +1029,275 @@ func TestChooseUsesTheNativeFolderPicker(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if called {
 		t.Fatal("a canceled picker still chose a folder")
+	}
+}
+
+func TestInstallShowsTheFailureUnderTheSteps(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	ui := newUI(a, a.NewWindow("t"), t.TempDir())
+	t.Cleanup(func() { ui.logFile.Close() })
+	ui.target = local.New(local.Options{GOOS: "windows", InstallDir: t.TempDir(), PaksDir: t.TempDir(), AddToSteam: true, SteamRoot: "x", SteamUser: "x/userdata/1"})
+	inlineBackground(t)
+	old := runInstall
+	runInstall = func(_ context.Context, _ target.Target, plan []target.Step, _ install.Options, _ int, _ func(install.Progress)) error {
+		return &install.StepError{Index: 2, Step: plan[2], Err: errors.New("disk full\nwhile writing")}
+	}
+	defer func() { runInstall = old }()
+	ui.showInstall()
+	if !ui.installFailure.Visible() || ui.installFailure.Text != "Push package: disk full while writing" {
+		t.Fatalf("%v %q", ui.installFailure.Visible(), ui.installFailure.Text)
+	}
+}
+
+// steamRefusal is the failure RegisterLaunchEntry reports while Steam runs.
+func steamRefusal(plan []target.Step) error {
+	for i, s := range plan {
+		if s == target.RegisterLaunchEntry {
+			return &install.StepError{Index: i, Step: s, Err: fmt.Errorf("Steam is running. %w", local.ErrSteamRunning)}
+		}
+	}
+	return errors.New("no launch entry step")
+}
+
+func TestRetryAfterClosingSteamYourselfDoesNotRelaunch(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	ui := newUI(a, a.NewWindow("t"), t.TempDir())
+	t.Cleanup(func() { ui.logFile.Close() })
+	ui.target = local.New(local.Options{GOOS: "windows", InstallDir: t.TempDir(), PaksDir: t.TempDir(), AddToSteam: true, SteamRoot: "x", SteamUser: "x/userdata/1"})
+	inlineBackground(t)
+	refuse := true
+	oldRun, oldRelaunch := runInstall, relaunchSteam
+	runInstall = func(_ context.Context, _ target.Target, plan []target.Step, _ install.Options, _ int, _ func(install.Progress)) error {
+		if refuse {
+			return steamRefusal(plan)
+		}
+		return nil
+	}
+	relaunches := 0
+	relaunchSteam = func(context.Context, target.SteamCloser, func(string)) error {
+		relaunches++
+		return errors.New("no steam")
+	}
+	defer func() { runInstall, relaunchSteam = oldRun, oldRelaunch }()
+	ui.showInstall()
+	refuse = false
+	ui.installRetry.OnTapped()
+	if relaunches != 0 || !strings.Contains(labels(ui.content), "Trinity is installed") {
+		t.Fatalf("relaunched %d; %q", relaunches, labels(ui.content))
+	}
+}
+
+func TestDestinationPrefillOrder(t *testing.T) {
+	cfg := t.TempDir()
+	installed, remembered := filepath.Join(t.TempDir(), "Installed"), filepath.Join(t.TempDir(), "Remembered")
+	os.WriteFile(filepath.Join(cfg, "settings.json"), []byte(`{"installDir":`+strconv.Quote(remembered)+`}`), 0o644)
+	open := func(entry string) *ui {
+		a := test.NewApp()
+		t.Cleanup(a.Quit)
+		u := newUI(a, a.NewWindow("t"), cfg)
+		t.Cleanup(func() { u.logFile.Close() })
+		u.goos = "windows"
+		old := installedDir
+		installedDir = func() (string, error) {
+			if entry == "" {
+				return "", errors.New("Trinity's uninstall entry was not found")
+			}
+			return entry, nil
+		}
+		t.Cleanup(func() { installedDir = old })
+		u.showPC()
+		return u
+	}
+	if got := open(installed).pcFolder.Text; got != installed {
+		t.Fatalf("the Apps entry must win: %q", got)
+	}
+	u := open("")
+	if got := u.pcFolder.Text; got != remembered {
+		t.Fatalf("the remembered folder must come next: %q", got)
+	}
+	chosen := filepath.Join(t.TempDir(), "D Games", "Trinity Test")
+	u.pcFolder.SetText(chosen)
+	u.pcNext.OnTapped()
+	if got := open("").pcFolder.Text; got != chosen {
+		t.Fatalf("Next did not remember the folder: %q", got)
+	}
+	os.Remove(filepath.Join(cfg, "settings.json"))
+	home, _ := os.UserHomeDir()
+	if got, want := open("").pcFolder.Text, local.Defaults("windows", runtime.GOARCH, home, os.Getenv("SystemDrive")).InstallDir; got != want {
+		t.Fatalf("with nothing to go on, the default: %q, want %q", got, want)
+	}
+}
+
+func TestInstalledNoteFollowsTheFolder(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	ui := newUI(a, a.NewWindow("t"), t.TempDir())
+	t.Cleanup(func() { ui.logFile.Close() })
+	ui.goos = "windows"
+	withRecord, without := t.TempDir(), t.TempDir()
+	os.WriteFile(filepath.Join(withRecord, "trinity-install.json"), []byte("{}"), 0o644)
+	ui.pc = local.Options{GOOS: "windows", InstallDir: without, PaksDir: without}
+	ui.showPC()
+	if ui.pcInstalledNote.Visible() {
+		t.Fatal("note shown for a folder without an install")
+	}
+	ui.pcFolder.SetText(withRecord)
+	if !ui.pcInstalledNote.Visible() {
+		t.Fatal("note hidden for a folder holding an install record")
+	}
+	ui.pcFolder.SetText(without)
+	if ui.pcInstalledNote.Visible() {
+		t.Fatal("note kept after choosing another folder")
+	}
+}
+
+func TestSteamRestartNote(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	ui := newUI(a, a.NewWindow("t"), t.TempDir())
+	t.Cleanup(func() { ui.logFile.Close() })
+	ui.goos = "windows"
+	dir := t.TempDir()
+	steamRoot := t.TempDir()
+	os.MkdirAll(filepath.Join(steamRoot, "userdata", "10005062"), 0o755)
+	ui.pc = local.Options{GOOS: "windows", InstallDir: dir, PaksDir: dir, SteamRoot: steamRoot, AddToSteam: true}
+	ui.showPC()
+	if !ui.pcSteamRestart.Visible() || ui.pcSteamRestart.Text != "Steam will restart to add the shortcut." {
+		t.Fatalf("%v %q", ui.pcSteamRestart.Visible(), ui.pcSteamRestart.Text)
+	}
+	ui.pcSteam.SetChecked(false)
+	if ui.pcSteamRestart.Visible() {
+		t.Fatal("note shown with Add to Steam unticked")
+	}
+	ui.pcSteam.SetChecked(true)
+	if !ui.pcSteamRestart.Visible() {
+		t.Fatal("note not back after ticking the box again")
+	}
+	ui.pc = local.Options{GOOS: "windows", InstallDir: dir, PaksDir: dir, AddToSteam: true}
+	ui.showPC()
+	if ui.pcSteamRestart.Visible() {
+		t.Fatal("note shown without Steam")
+	}
+	empty := t.TempDir()
+	os.MkdirAll(filepath.Join(empty, "userdata"), 0o755)
+	ui.pc = local.Options{GOOS: "windows", InstallDir: dir, PaksDir: dir, SteamRoot: empty, AddToSteam: true}
+	ui.showPC()
+	if ui.pcSteamRestart.Visible() {
+		t.Fatal("note shown while the box cannot be ticked")
+	}
+}
+
+// closingTarget is the PC target with the installer's own Steam close pretended, as the shortcut step does when Steam runs.
+type closingTarget struct {
+	*local.Target
+	closed bool
+}
+
+func (c *closingTarget) SteamClosed() bool { return c.closed }
+
+func TestInstallRelaunchesASteamTheStepClosed(t *testing.T) {
+	for _, fails := range []bool{false, true} {
+		a := test.NewApp()
+		ui := newUI(a, a.NewWindow("t"), t.TempDir())
+		t.Cleanup(func() { ui.logFile.Close(); a.Quit() })
+		ct := &closingTarget{Target: local.New(local.Options{GOOS: "windows", InstallDir: t.TempDir(), PaksDir: t.TempDir(), AddToSteam: true, SteamRoot: "x", SteamUser: "x/userdata/1"})}
+		ui.target = ct
+		inlineBackground(t)
+		oldRun, oldRelaunch := runInstall, relaunchSteam
+		runInstall = func(_ context.Context, _ target.Target, plan []target.Step, _ install.Options, _ int, _ func(install.Progress)) error {
+			ct.closed = true
+			if fails {
+				return &install.StepError{Index: len(plan) - 1, Step: plan[len(plan)-1], Err: errors.New("artwork failed")}
+			}
+			return nil
+		}
+		relaunches := 0
+		relaunchSteam = func(context.Context, target.SteamCloser, func(string)) error {
+			relaunches++
+			ct.closed = false
+			return nil
+		}
+		ui.showInstall()
+		if fails {
+			if relaunches != 0 {
+				t.Fatal("relaunched before leaving")
+			}
+			ui.installBack.OnTapped()
+		}
+		if relaunches != 1 {
+			t.Fatalf("fails %v: %d relaunches", fails, relaunches)
+		}
+		runInstall, relaunchSteam = oldRun, oldRelaunch
+	}
+}
+
+// visibleButtons lists the texts of the buttons a screen shows.
+func visibleButtons(o fyne.CanvasObject) []string {
+	var out []string
+	for _, w := range allWidgets(o) {
+		if b, ok := w.(*widget.Button); ok && b.Visible() {
+			out = append(out, b.Text)
+		}
+	}
+	return out
+}
+
+func TestSteamThatWillNotCloseOffersRetryAndBack(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	ui := newUI(a, a.NewWindow("t"), t.TempDir())
+	t.Cleanup(func() { ui.logFile.Close() })
+	ui.target = local.New(local.Options{GOOS: "windows", InstallDir: t.TempDir(), PaksDir: t.TempDir(), AddToSteam: true, SteamRoot: "x", SteamUser: "x/userdata/1"})
+	inlineBackground(t)
+	var froms []int
+	refuse := true
+	oldRun := runInstall
+	runInstall = func(_ context.Context, _ target.Target, plan []target.Step, _ install.Options, from int, _ func(install.Progress)) error {
+		froms = append(froms, from)
+		if refuse {
+			for i, s := range plan {
+				if s == target.RegisterLaunchEntry {
+					return &install.StepError{Index: i, Step: s, Err: fmt.Errorf("Steam is running and did not close: Steam did not close. %w", local.ErrSteamRunning)}
+				}
+			}
+		}
+		return nil
+	}
+	defer func() { runInstall = oldRun }()
+	ui.showInstall()
+	if got := strings.Join(visibleButtons(ui.content), ","); got != "Back,Retry" {
+		t.Fatalf("buttons %s", got)
+	}
+	if want := "Register launch entry: Steam is running and did not close: Steam did not close. Close Steam, then press Retry."; ui.installFailure.Text != want {
+		t.Fatalf("%q", ui.installFailure.Text)
+	}
+	refuse = false
+	ui.installRetry.OnTapped()
+	plan, _ := target.Plan(context.Background(), ui.target)
+	if len(froms) != 2 || froms[1] != steamRefusal(plan).(*install.StepError).Index || !strings.Contains(labels(ui.content), "Trinity is installed") {
+		t.Fatalf("%v %q", froms, labels(ui.content))
+	}
+}
+
+func TestRelaunchFailureStillFinishes(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	ui := newUI(a, a.NewWindow("t"), t.TempDir())
+	t.Cleanup(func() { ui.logFile.Close() })
+	ct := &closingTarget{Target: local.New(local.Options{GOOS: "windows", InstallDir: t.TempDir(), PaksDir: t.TempDir(), AddToSteam: true, SteamRoot: "x", SteamUser: "x/userdata/1"})}
+	ui.target = ct
+	inlineBackground(t)
+	oldRun, oldRelaunch := runInstall, relaunchSteam
+	runInstall = func(context.Context, target.Target, []target.Step, install.Options, int, func(install.Progress)) error {
+		ct.closed = true
+		return nil
+	}
+	relaunchSteam = func(context.Context, target.SteamCloser, func(string)) error { return errors.New("no steam") }
+	defer func() { runInstall, relaunchSteam = oldRun, oldRelaunch }()
+	ui.showInstall()
+	if !strings.Contains(labels(ui.content), "Trinity is installed") {
+		t.Fatalf("%q", labels(ui.content))
 	}
 }

@@ -72,7 +72,8 @@ func (u *ui) showUninstall() {
 		cancel.Hide()
 		status.SetText("Removing Trinity...")
 		status.Show()
-		opts := local.UninstallOptions{InstallDir: dir, DeleteSettings: settings.Checked}
+		// The window closes a running Steam and starts it again; only the silent uninstall refuses instead.
+		opts := local.UninstallOptions{InstallDir: dir, DeleteSettings: settings.Checked, CloseSteam: true}
 		background(func() {
 			errs := uninstallRun(context.Background(), opts, func(line string) { u.logf("%s", line) })
 			fyne.Do(func() {

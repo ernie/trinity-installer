@@ -19,11 +19,15 @@ func (u *ui) showPC() {
 	if u.pc.InstallDir == "" {
 		home, _ := os.UserHomeDir()
 		u.pc = local.Defaults(u.goos, runtime.GOARCH, home, os.Getenv("SystemDrive"))
-		// An existing install wins over the default, so an update lands where the user put Trinity before.
-		if u.goos == "windows" {
-			if dir, err := local.InstalledDir(); err == nil && dir != "" {
-				u.pc.InstallDir, u.pc.PaksDir = dir, dir
-				u.pcInstalled = true
+		// The Apps entry wins, then the folder last confirmed here, so an update lands where the user put Trinity before.
+		dir, err := installedDir()
+		if err != nil || dir == "" {
+			dir = loadSettings(u.cfgDir).InstallDir
+		}
+		if dir != "" {
+			u.pc.InstallDir = dir
+			if u.goos != "darwin" {
+				u.pc.PaksDir = dir
 			}
 		}
 	}
@@ -35,9 +39,7 @@ func (u *ui) showPC() {
 	intro.Wrapping = fyne.TextWrapWord
 	note := widget.NewLabel("Trinity is already installed. Reinstalling will repair/update.")
 	note.Wrapping = fyne.TextWrapWord
-	if !u.pcInstalled {
-		note.Hide()
-	}
+	u.pcInstalledNote = note
 	u.pcNext = widget.NewButton("Next", nil)
 	u.pcFolder = widget.NewEntry()
 	// A relative path would land wherever the installer happened to start.
@@ -46,6 +48,11 @@ func (u *ui) showPC() {
 			u.pcNext.Enable()
 		} else {
 			u.pcNext.Disable()
+		}
+		if local.HasInstallRecord(strings.TrimSpace(s)) {
+			note.Show()
+		} else {
+			note.Hide()
 		}
 	}
 	u.pcFolder.OnChanged = validate
@@ -82,6 +89,17 @@ func (u *ui) showPC() {
 		u.pc.SteamUser = user
 	}
 	u.pcSteam.SetChecked(u.pc.AddToSteam)
+	u.pcSteamRestart = widget.NewLabel("Steam will restart to add the shortcut.")
+	u.pcSteamRestart.Wrapping = fyne.TextWrapWord
+	steamNote := func(bool) {
+		if u.pcSteam.Visible() && !u.pcSteam.Disabled() && u.pcSteam.Checked {
+			u.pcSteamRestart.Show()
+		} else {
+			u.pcSteamRestart.Hide()
+		}
+	}
+	u.pcSteam.OnChanged = steamNote
+	steamNote(u.pcSteam.Checked)
 	u.pcNext.OnTapped = func() {
 		u.pc.InstallDir = strings.TrimSpace(u.pcFolder.Text)
 		if u.goos != "darwin" {
@@ -91,10 +109,13 @@ func (u *ui) showPC() {
 		u.pc.StartMenu = u.pcStartMenu.Checked && u.goos != "darwin"
 		u.pc.Desktop = u.pcDesktop.Checked && u.goos != "darwin"
 		u.pc.Icon = grid.Icon
+		if err := saveSettings(u.cfgDir, settings{InstallDir: u.pc.InstallDir}); err != nil {
+			u.logf("could not remember the install folder: %v", err)
+		}
 		u.target = local.New(u.pc)
 		u.showQuake3()
 	}
 	back := widget.NewButton("Back", func() { u.showTarget() })
-	body := container.NewVBox(note, intro, container.NewBorder(nil, nil, nil, choose, u.pcFolder), u.pcStartMenu, u.pcDesktop, u.pcSteam, u.pcSteamNote)
+	body := container.NewVBox(note, intro, container.NewBorder(nil, nil, nil, choose, u.pcFolder), u.pcStartMenu, u.pcDesktop, u.pcSteam, u.pcSteamRestart, u.pcSteamNote)
 	u.show(container.NewBorder(nil, buttonRow(back, u.pcNext), nil, nil, body))
 }

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ernie/trinity-installer/internal/release"
 	"github.com/ernie/trinity-installer/internal/steam"
@@ -296,8 +297,10 @@ func TestSteamRunningBlocksShortcut(t *testing.T) {
 	tg := New(Options{GOOS: "linux", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot, SteamUser: filepath.Join(steamRoot, "userdata", "10005062"), StartMenu: true})
 	tg.home = home
 	tg.steamRunning = func() (bool, error) { return true, nil }
+	tg.wait = func(time.Duration) <-chan time.Time { c := make(chan time.Time, 1); c <- time.Time{}; return c }
+	// A Steam that will not close leaves the shortcut unwritten and the step failed.
 	err := tg.RegisterLaunchEntry(context.Background(), func(string) {})
-	if err == nil || err.Error() != "Steam is running. Close Steam, then press Retry." {
+	if !errors.Is(err, ErrSteamRunning) || !strings.HasPrefix(err.Error(), "Steam is running and did not close") {
 		t.Fatalf("%v", err)
 	}
 	if _, err := os.Stat(vdf); err == nil {

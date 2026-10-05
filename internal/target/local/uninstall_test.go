@@ -110,6 +110,12 @@ func (in installed) uninstaller(self string) *fakeUninstaller {
 	return f
 }
 
+func (f *fakeUninstaller) runWith(opts UninstallOptions) ([]error, string) {
+	var lines []string
+	errs := f.run(context.Background(), opts, func(l string) { lines = append(lines, l) })
+	return errs, strings.Join(lines, "\n")
+}
+
 func (f *fakeUninstaller) runIn(dir string, settings bool) ([]error, string) {
 	var lines []string
 	errs := f.run(context.Background(), UninstallOptions{InstallDir: dir, DeleteSettings: settings}, func(l string) { lines = append(lines, l) })
@@ -810,5 +816,100 @@ func TestLookalikesAreNotTheDefaultFolder(t *testing.T) {
 		if readRecord(t, dir).CreatedInstallDir {
 			t.Fatalf("%s recorded as the default folder", dir)
 		}
+	}
+}
+
+func TestUninstallClosesAndRelaunchesSteam(t *testing.T) {
+	in := installForUninstall(t)
+	u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+	running := true
+	u.steamRunning = func() (bool, error) { return running, nil }
+	var closes, relaunches []string
+	u.closeSteam = func(_ context.Context, root string, _ func(string)) error {
+		closes = append(closes, root)
+		running = false
+		return nil
+	}
+	u.relaunchSteam = func(_ context.Context, root string, _ func(string)) error {
+		if exists(filepath.Join(in.dir, "trinity.exe")) {
+			t.Error("Steam started again before the files were removed")
+		}
+		relaunches = append(relaunches, root)
+		return nil
+	}
+	errs, log := u.runWith(UninstallOptions{InstallDir: in.dir, CloseSteam: true})
+	if len(errs) != 0 {
+		t.Fatalf("%v\n%s", errs, log)
+	}
+	if len(closes) != 1 || closes[0] != in.steamRoot || len(relaunches) != 1 || relaunches[0] != in.steamRoot {
+		t.Fatalf("closes %v relaunches %v", closes, relaunches)
+	}
+	if !strings.Contains(log, "closing Steam") || exists(in.dir) {
+		t.Fatalf("%s", log)
+	}
+}
+
+func TestUninstallDoesNotTouchAClosedSteam(t *testing.T) {
+	in := installForUninstall(t)
+	u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+	u.closeSteam = func(context.Context, string, func(string)) error {
+		t.Error("closed a Steam that was not running")
+		return nil
+	}
+	u.relaunchSteam = func(context.Context, string, func(string)) error {
+		t.Error("started a Steam the user had closed")
+		return nil
+	}
+	if errs, _ := u.runWith(UninstallOptions{InstallDir: in.dir, CloseSteam: true}); len(errs) != 0 {
+		t.Fatal(errs)
+	}
+}
+
+func TestUninstallRefusesWhenSteamWillNotClose(t *testing.T) {
+	for name, close := range map[string]func(*uninstaller) func(context.Context, string, func(string)) error{
+		"close fails": func(*uninstaller) func(context.Context, string, func(string)) error {
+			return func(context.Context, string, func(string)) error { return errors.New("Steam did not close") }
+		},
+		"SteamVR stays": func(u *uninstaller) func(context.Context, string, func(string)) error {
+			return func(context.Context, string, func(string)) error {
+				u.steamRunning = func() (bool, error) { return false, nil }
+				return nil
+			}
+		},
+	} {
+		in := installForUninstall(t)
+		u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+		u.steamRunning = func() (bool, error) { return true, nil }
+		if name == "SteamVR stays" {
+			u.steamVRRunning = func() (bool, error) { return true, nil }
+		}
+		u.closeSteam = close(u.uninstaller)
+		relaunches := 0
+		u.relaunchSteam = func(context.Context, string, func(string)) error { relaunches++; return nil }
+		errs, _ := u.runWith(UninstallOptions{InstallDir: in.dir, CloseSteam: true})
+		if len(errs) != 1 || !errors.Is(errs[0], ErrSteamRunning) {
+			t.Fatalf("%s: %v", name, errs)
+		}
+		// A Steam the uninstaller did close is started again even though the uninstall stops.
+		if want := map[string]int{"close fails": 0, "SteamVR stays": 1}[name]; relaunches != want {
+			t.Fatalf("%s: %d relaunches, want %d", name, relaunches, want)
+		}
+		if !exists(filepath.Join(in.dir, "trinity.exe")) || len(in.reg.keys) != 1 {
+			t.Fatalf("%s: removed files while Steam runs", name)
+		}
+	}
+}
+
+func TestQuietUninstallStillRefusesWhileSteamRuns(t *testing.T) {
+	in := installForUninstall(t)
+	u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+	u.steamRunning = func() (bool, error) { return true, nil }
+	u.closeSteam = func(context.Context, string, func(string)) error {
+		t.Error("closed Steam behind the user's back")
+		return nil
+	}
+	errs, _ := u.runWith(UninstallOptions{InstallDir: in.dir})
+	if len(errs) != 1 || !errors.Is(errs[0], ErrSteamRunning) {
+		t.Fatalf("%v", errs)
 	}
 }

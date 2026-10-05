@@ -64,7 +64,8 @@ type ui struct {
 	pcStartMenu                 *widget.Check
 	pcDesktop                   *widget.Check
 	pcSteam                     *widget.Check
-	pcInstalled                 bool
+	pcInstalledNote             *widget.Label
+	pcSteamRestart              *widget.Label
 	pcSteamNote                 *widget.Label
 	pcNext                      *widget.Button
 	deviceList                  *widget.List
@@ -76,6 +77,7 @@ type ui struct {
 	eulaRetry                   *widget.Button
 	eulaScrolled                func(fyne.Position)
 	installRetry, installBack   *widget.Button
+	installFailure              *widget.Label
 	quake3Next                  *widget.Button
 	baseq3Line, missionpackLine *widget.Label
 	headsetManual               *widget.Entry

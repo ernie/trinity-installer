@@ -89,7 +89,7 @@ func TestUninstallScreenRemoves(t *testing.T) {
 	}
 	ui.uninstallSettings.SetChecked(true)
 	ui.uninstallRemove.OnTapped()
-	if len(*calls) != 1 || (*calls)[0] != (local.UninstallOptions{InstallDir: dir, DeleteSettings: true}) {
+	if len(*calls) != 1 || (*calls)[0] != (local.UninstallOptions{InstallDir: dir, DeleteSettings: true, CloseSteam: true}) {
 		t.Fatalf("%+v", *calls)
 	}
 	if text := labels(ui.content); !strings.Contains(text, "Trinity has been removed.") {
@@ -133,7 +133,7 @@ func TestUninstallScreenListsFailures(t *testing.T) {
 
 func TestUninstallScreenRetriesARefusal(t *testing.T) {
 	for _, refusal := range []error{
-		fmt.Errorf("Steam is running. %w", local.ErrSteamRunning),
+		fmt.Errorf("Steam is running and did not close: Steam did not close. %w", local.ErrSteamRunning),
 		fmt.Errorf("Trinity is running. %w", local.ErrTrinityRunning),
 	} {
 		a := test.NewApp()
@@ -151,6 +151,9 @@ func TestUninstallScreenRetriesARefusal(t *testing.T) {
 		ui.uninstallRemove.OnTapped()
 		if ui.uninstallStatus.Text != refusal.Error() || ui.uninstallRemove.Text != "Retry" || ui.uninstallRemove.Disabled() || !ui.uninstallCancel.Visible() {
 			t.Fatalf("%q %q", ui.uninstallStatus.Text, ui.uninstallRemove.Text)
+		}
+		if got := strings.Join(visibleButtons(ui.content), ","); got != "Cancel,Retry" {
+			t.Fatalf("%v: buttons %s", refusal, got)
 		}
 		if strings.Contains(labels(ui.content), "has been removed") {
 			t.Fatal("a refusal reported as removed")

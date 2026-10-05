@@ -31,6 +31,12 @@ type installRecord struct {
 	Desktop           string   `json:"desktop"`
 }
 
+// HasInstallRecord reports whether dir holds a Trinity install made by this installer.
+func HasInstallRecord(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, recordName))
+	return dir != "" && err == nil
+}
+
 // loadRecord starts from an earlier install's record in the same folder, so a re-install keeps what that one wrote.
 func (t *Target) loadRecord() {
 	t.rec = installRecord{}
@@ -87,8 +93,11 @@ func (t *Target) noteNewDirs(dir string) {
 // Pushed records a pak the runner wrote; one it found already in place stays the user's.
 func (t *Target) Pushed(rel string) {
 	t.recordFile(filepath.Join(t.opts.PaksDir, filepath.FromSlash(rel)))
-	// Best effort: RegisterLaunchEntry saves the record again and reports a failure there.
+	// Best effort: RegisterLaunchEntry saves the record and the entry again and reports a failure there.
 	t.saveRecord(context.Background())
+	if t.entryWritten {
+		t.registry.SetDWORD(uninstallKey, "EstimatedSize", EstimatedSizeKB(t.opts.InstallDir, t.rec.Files))
+	}
 }
 
 func (t *Target) saveRecord(ctx context.Context) error {
@@ -144,9 +153,7 @@ func same(a, b string) bool {
 
 // registerUninstall runs after the paks are in, so EstimatedSize counts them.
 func (t *Target) registerUninstall(ctx context.Context, log func(string)) error {
-	dir := t.opts.InstallDir
-	uninst := filepath.Join(dir, "uninstall.exe")
-	if _, err := os.Stat(uninst); err != nil {
+	if _, err := os.Stat(filepath.Join(t.opts.InstallDir, "uninstall.exe")); err != nil {
 		log("no uninstall.exe, so no Settings > Apps entry")
 		return nil
 	}
@@ -158,6 +165,17 @@ func (t *Target) registerUninstall(ctx context.Context, log func(string)) error 
 	}
 	if err := t.saveRecord(ctx); err != nil {
 		return err
+	}
+	return t.writeEntry(log)
+}
+
+// writeEntry writes or refreshes the Settings > Apps entry; without uninstall.exe its Uninstall button could not work, so there is none.
+func (t *Target) writeEntry(log func(string)) error {
+	dir := t.opts.InstallDir
+	uninst := filepath.Join(dir, "uninstall.exe")
+	if _, err := os.Stat(uninst); err != nil {
+		log("no uninstall.exe, so no Settings > Apps entry")
+		return nil
 	}
 	for _, v := range [][2]string{
 		{"DisplayName", "Trinity"},
@@ -177,6 +195,7 @@ func (t *Target) registerUninstall(ctx context.Context, log func(string)) error 
 			return fmt.Errorf("writing the uninstall entry: %w", err)
 		}
 	}
+	t.entryWritten = true
 	log("uninstall entry written for Settings > Apps")
 	return nil
 }
@@ -210,6 +229,8 @@ func EstimatedSizeKB(dir string, files []string) uint32 {
 type UninstallOptions struct {
 	InstallDir     string
 	DeleteSettings bool
+	// CloseSteam closes a running Steam and starts it again afterwards; without it a running Steam refuses the uninstall.
+	CloseSteam bool
 }
 
 // ErrSteamRunning and ErrTrinityRunning mark refusals the user clears by closing the program and trying again.
@@ -226,6 +247,8 @@ type uninstaller struct {
 	self           func() (string, error)
 	detach         func(cmdLine, dir string) error
 	defaultDir     string // the per-user default install folder, which is the installer's whatever the record says
+	closeSteam     func(ctx context.Context, steamRoot string, log func(string)) error
+	relaunchSteam  func(ctx context.Context, steamRoot string, log func(string)) error
 }
 
 // Uninstall removes what the Windows install in opts.InstallDir recorded, logging each step and returning every failure; a running Trinity or Steam refuses it before anything is removed.
@@ -238,6 +261,17 @@ func Uninstall(ctx context.Context, opts UninstallOptions, log func(string)) []e
 		self:           os.Executable,
 		detach:         startDetached,
 		defaultDir:     defaultInstallDir("windows", "", os.Getenv("SystemDrive")),
+	}
+	steamAt := func(root string) *Target {
+		tg := New(Options{GOOS: "windows", SteamRoot: root})
+		tg.registry, tg.steamRunning = u.registry, u.steamRunning
+		return tg
+	}
+	u.closeSteam = func(ctx context.Context, root string, log func(string)) error {
+		return steamAt(root).CloseSteam(ctx, log)
+	}
+	u.relaunchSteam = func(ctx context.Context, root string, log func(string)) error {
+		return steamAt(root).RelaunchSteam(ctx, log)
 	}
 	return u.run(ctx, opts, log)
 }
@@ -265,8 +299,13 @@ func (u *uninstaller) run(ctx context.Context, opts UninstallOptions, log func(s
 		rec.CreatedInstallDir = true
 	}
 	steamOK := rec.SteamRoot != "" && isSteamRoot(rec.SteamRoot)
-	if err := u.closed(steamOK); err != nil {
+	closedSteam, err := u.closed(ctx, steamOK, opts.CloseSteam, rec.SteamRoot, log)
+	if err != nil {
 		return refuse(err)
+	}
+	if closedSteam {
+		// RelaunchSteam logs its own failure; a Steam that will not start never fails the uninstall.
+		defer u.relaunchSteam(ctx, rec.SteamRoot, log)
 	}
 	var errs []error
 	fail := func(what string, err error) {
@@ -503,25 +542,47 @@ func (u *uninstaller) deleteKey(log func(string), fail func(string, error)) {
 	}
 }
 
-func (u *uninstaller) closed(steamToo bool) error {
-	type check struct {
+// closed refuses while Trinity runs; a running Steam is closed when the caller allows it, else refused. It reports whether it closed Steam.
+func (u *uninstaller) closed(ctx context.Context, steamToo, closeSteam bool, steamRoot string, log func(string)) (bool, error) {
+	if err := check("Trinity", u.trinityRunning, ErrTrinityRunning); err != nil {
+		return false, err
+	}
+	if !steamToo {
+		return false, nil
+	}
+	// Steam rewrites shortcuts.vdf from memory when it exits, so a removal while it runs would come back.
+	steamErr := check("Steam", u.steamRunning, ErrSteamRunning)
+	if steamErr == nil {
+		steamErr = check("SteamVR", u.steamVRRunning, ErrSteamRunning)
+	}
+	if steamErr == nil || !closeSteam {
+		return false, steamErr
+	}
+	log("closing Steam")
+	if err := u.closeSteam(ctx, steamRoot, log); err != nil {
+		return false, fmt.Errorf("Steam is running and did not close: %v. %w", err, ErrSteamRunning)
+	}
+	for _, c := range []struct {
 		name    string
 		running func() (bool, error)
-		then    error
-	}
-	checks := []check{{"Trinity", u.trinityRunning, ErrTrinityRunning}}
-	if steamToo {
-		// Steam rewrites shortcuts.vdf from memory when it exits, so a removal now would come back.
-		checks = append(checks, check{"Steam", u.steamRunning, ErrSteamRunning}, check{"SteamVR", u.steamVRRunning, ErrSteamRunning})
-	}
-	for _, c := range checks {
-		on, err := c.running()
-		if err != nil {
-			return fmt.Errorf("could not tell whether %s is running: %v. %w", c.name, err, c.then)
+	}{{"Steam", u.steamRunning}, {"SteamVR", u.steamVRRunning}} {
+		if err := check(c.name, c.running, ErrSteamRunning); err != nil {
+			// Steam is down by now, so start it again even though the uninstall stops here.
+			u.relaunchSteam(ctx, steamRoot, log)
+			return false, err
 		}
-		if on {
-			return fmt.Errorf("%s is running. %w", c.name, c.then)
-		}
+	}
+	return true, nil
+}
+
+// check turns a running or uncheckable program into a refusal marked with then.
+func check(name string, running func() (bool, error), then error) error {
+	on, err := running()
+	if err != nil {
+		return fmt.Errorf("could not tell whether %s is running: %v. %w", name, err, then)
+	}
+	if on {
+		return fmt.Errorf("%s is running. %w", name, then)
 	}
 	return nil
 }

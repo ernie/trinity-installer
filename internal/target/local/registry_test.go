@@ -128,12 +128,17 @@ func TestUninstallEntryWritten(t *testing.T) {
 	if b, err := os.ReadFile(filepath.Join(install, "uninstall.exe")); err != nil || string(b) != "installer" {
 		t.Fatalf("uninstall.exe %q %v", b, err)
 	}
-	if len(reg.keys) != 0 {
-		t.Fatal("the entry must wait for the launch entry step, after the paks are in")
+	// An install that stops at a later step must still leave a working Settings > Apps entry.
+	if reg.keys[uninstallKey]["InstallLocation"] != install || reg.keys[uninstallKey]["UninstallString"] == nil {
+		t.Fatalf("no entry once the files are in: %+v", reg.keys)
 	}
+	before := reg.keys[uninstallKey]["EstimatedSize"].(uint32)
 	// A pushed pak counts; a file the installer did not write does not.
 	os.WriteFile(filepath.Join(install, "baseq3", "pak0.pk3"), make([]byte, 5000), 0o644)
 	tg.Pushed("baseq3/pak0.pk3")
+	if after := reg.keys[uninstallKey]["EstimatedSize"].(uint32); after < before+4 {
+		t.Fatalf("EstimatedSize %d after a 5000-byte pak, %d before", after, before)
+	}
 	os.WriteFile(filepath.Join(install, "notes.txt"), make([]byte, 100000), 0o644)
 	if err := tg.RegisterLaunchEntry(ctx, log); err != nil {
 		t.Fatal(err)
@@ -276,6 +281,9 @@ func TestUnreadableInstallerSkipsUninstallExe(t *testing.T) {
 		t.Fatalf("%v", rec.Files)
 	}
 	// An entry whose uninstaller is missing would offer a Settings button that cannot work.
+	if len(reg.keys) != 0 {
+		t.Fatalf("%+v", reg.keys)
+	}
 	if err := tg.RegisterLaunchEntry(context.Background(), log); err != nil || len(reg.keys) != 0 {
 		t.Fatalf("%v %+v", err, reg.keys)
 	}

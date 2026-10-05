@@ -46,6 +46,13 @@ type Recorder interface {
 	Pushed(rel string)
 }
 
+// SteamCloser is a target whose shortcut step may close the PC's Steam, which the installer then starts again.
+type SteamCloser interface {
+	RelaunchSteam(ctx context.Context, log func(string)) error
+	// SteamClosed reports that the target closed Steam and has not started it again.
+	SteamClosed() bool
+}
+
 // Restarter is a target whose Steam must restart before the new library entry shows its artwork.
 type Restarter interface {
 	RestartSteam(ctx context.Context) error
