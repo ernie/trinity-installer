@@ -27,7 +27,8 @@ type Progress struct {
 }
 
 type Options struct {
-	Fetch     func(ctx context.Context, spec release.Spec, log func(string)) ([]byte, error)
+	// Fetch returns the asset's bytes and its release tag.
+	Fetch     func(ctx context.Context, spec release.Spec, log func(string)) ([]byte, string, error)
 	Paks      []quake3.Pak
 	PatchRels []string
 	Patch     *patch.Set
@@ -102,9 +103,9 @@ func run(ctx context.Context, t target.Target, st *state, step target.Step, log 
 	case target.PushPackage:
 		return t.PushPackage(ctx, st.pkg, log)
 	case target.PushRetailPaks:
-		return pushPaks(ctx, t.Store(), st, log)
+		return pushPaks(ctx, t.Store(), st, pushed(t), log)
 	case target.PushPatch:
-		return pushPatch(ctx, t.Store(), st, log)
+		return pushPatch(ctx, t.Store(), st, pushed(t), log)
 	case target.RegisterLaunchEntry:
 		return t.RegisterLaunchEntry(ctx, log)
 	case target.ReadAppID:

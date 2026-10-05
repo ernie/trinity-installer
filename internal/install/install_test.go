@@ -41,8 +41,8 @@ func localPaks(t *testing.T, rels ...string) []quake3.Pak {
 
 func options(t *testing.T) Options {
 	return Options{
-		Fetch: func(context.Context, release.Spec, func(string)) ([]byte, error) {
-			return zipOf("trinity", "baseq3/pak8t.pk3"), nil
+		Fetch: func(context.Context, release.Spec, func(string)) ([]byte, string, error) {
+			return zipOf("trinity", "baseq3/pak8t.pk3"), "v0.9.1", nil
 		},
 		Paks: localPaks(t, "baseq3/pak0.pk3", "missionpack/pak0.pk3"),
 		Art:  map[string][]byte{"capsule": {1}, "hero": {2}},
@@ -69,6 +69,9 @@ func TestRunFullPlan(t *testing.T) {
 	}
 	if got := strings.Join(ft.calls, ","); got != "prepare,package,launch,appid,vr:42,art:42:2" {
 		t.Fatalf("%s", got)
+	}
+	if ft.tag != "v0.9.1" {
+		t.Fatalf("the package reached the target without the release tag: %q", ft.tag)
 	}
 	last := (*events)[len(*events)-1]
 	if last.Index != len(plan)-1 || last.Step != target.InstallArtwork || last.State != Done {
@@ -166,7 +169,9 @@ func TestFetchRejectsBadAsset(t *testing.T) {
 	ft := newFakeTarget()
 	plan, _ := target.Plan(context.Background(), ft)
 	opts := options(t)
-	opts.Fetch = func(context.Context, release.Spec, func(string)) ([]byte, error) { return zipOf("other"), nil }
+	opts.Fetch = func(context.Context, release.Spec, func(string)) ([]byte, string, error) {
+		return zipOf("other"), "v1", nil
+	}
 	report, _ := collect()
 	err := Run(context.Background(), ft, plan, opts, 0, report)
 	var se *StepError
@@ -302,5 +307,34 @@ func TestFakePushPackageReportsPutErrors(t *testing.T) {
 	var se *StepError
 	if !errors.As(err, &se) || se.Step != target.PushPackage {
 		t.Fatalf("%v", err)
+	}
+}
+
+// recordingTarget is a fake target that also implements target.Recorder.
+type recordingTarget struct {
+	*fakeTarget
+	pushed []string
+}
+
+func (r *recordingTarget) Pushed(rel string) { r.pushed = append(r.pushed, rel) }
+
+func TestRecorderHearsOnlyWrittenPaks(t *testing.T) {
+	rt := &recordingTarget{fakeTarget: newFakeTarget(target.PushPatch)}
+	var _ target.Recorder = rt
+	plan, _ := target.Plan(context.Background(), rt)
+	opts := options(t)
+	set, err := patch.OpenSet(zipOf("baseq3/pak1.pk3", "baseq3/pak2.pk3", "missionpack/pak1.pk3", "missionpack/pak2.pk3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.Patch, opts.PatchRels = set, []string{"missionpack/pak1.pk3"}
+	// A pak already in place is the user's own until a record says otherwise, so it is never reported.
+	rt.st.files["/dest/baseq3/pak0.pk3"] = []byte("pak baseq3/pak0.pk3")
+	report, _ := collect()
+	if err := Run(context.Background(), rt, plan, opts, 0, report); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(rt.pushed, ","); got != "missionpack/pak0.pk3,missionpack/pak1.pk3" {
+		t.Fatal(got)
 	}
 }

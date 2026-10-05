@@ -15,7 +15,7 @@ const spaceMargin = 256 << 20
 
 func fetchRelease(ctx context.Context, t target.Target, st *state, log func(string)) error {
 	spec := t.Asset()
-	raw, err := st.opts.Fetch(ctx, spec, log)
+	raw, tag, err := st.opts.Fetch(ctx, spec, log)
 	if err != nil {
 		return err
 	}
@@ -23,6 +23,7 @@ func fetchRelease(ctx context.Context, t target.Target, st *state, log func(stri
 	if err != nil {
 		return err
 	}
+	pkg.Tag = tag
 	st.pkg = pkg
 	log(fmt.Sprintf("%s: %d bytes", spec.Asset, len(raw)))
 	return nil
@@ -34,7 +35,15 @@ type pending struct {
 	open func() (io.ReadCloser, error)
 }
 
-func pushAll(ctx context.Context, s store.Store, dir string, items []pending, log func(string)) error {
+// pushed reports written files to a target that records them, and to nothing otherwise.
+func pushed(t target.Target) func(rel string) {
+	if r, ok := t.(target.Recorder); ok {
+		return r.Pushed
+	}
+	return func(string) {}
+}
+
+func pushAll(ctx context.Context, s store.Store, dir string, items []pending, onPut func(rel string), log func(string)) error {
 	var todo []pending
 	var need int64
 	for _, p := range items {
@@ -72,21 +81,22 @@ func pushAll(ctx context.Context, s store.Store, dir string, items []pending, lo
 		if err != nil {
 			return fmt.Errorf("%s: %w", p.rel, err)
 		}
+		onPut(p.rel)
 		log(fmt.Sprintf("pushed %s (%d MB)", p.rel, p.size>>20))
 	}
 	return nil
 }
 
-func pushPaks(ctx context.Context, s store.Store, st *state, log func(string)) error {
+func pushPaks(ctx context.Context, s store.Store, st *state, onPut func(string), log func(string)) error {
 	var items []pending
 	for _, p := range st.opts.Paks {
 		path := p.Path
 		items = append(items, pending{p.Rel, p.Size, func() (io.ReadCloser, error) { return os.Open(path) }})
 	}
-	return pushAll(ctx, s, st.paksDir, items, log)
+	return pushAll(ctx, s, st.paksDir, items, onPut, log)
 }
 
-func pushPatch(ctx context.Context, s store.Store, st *state, log func(string)) error {
+func pushPatch(ctx context.Context, s store.Store, st *state, onPut func(string), log func(string)) error {
 	if st.opts.Patch == nil {
 		log("the 1.32 patch files came from your Quake III folder")
 		return nil
@@ -99,7 +109,7 @@ func pushPatch(ctx context.Context, s store.Store, st *state, log func(string)) 
 		}
 		items = append(items, pending{rel, e.Size(), e.Open})
 	}
-	return pushAll(ctx, s, st.paksDir, items, log)
+	return pushAll(ctx, s, st.paksDir, items, onPut, log)
 }
 
 // progressReader logs every 16 MB so a long upload is visibly alive.

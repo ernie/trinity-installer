@@ -41,6 +41,11 @@ type Target interface {
 	Reconnect(ctx context.Context) error
 }
 
+// Recorder is a target told of every pak the runner wrote, so it can later remove exactly those; one already in place is never reported.
+type Recorder interface {
+	Pushed(rel string)
+}
+
 // Restarter is a target whose Steam must restart before the new library entry shows its artwork.
 type Restarter interface {
 	RestartSteam(ctx context.Context) error

@@ -23,17 +23,24 @@ func (t *Target) windowsShortcut(ctx context.Context, log func(string)) error {
 	return nil
 }
 
-// startMenu follows APPDATA, which folder redirection can move off the home folder.
 func (t *Target) startMenu() (string, error) {
-	base := os.Getenv("APPDATA")
-	if base == "" {
-		home, err := t.homeDir()
-		if err != nil {
-			return "", err
-		}
-		base = filepath.Join(home, "AppData", "Roaming")
+	base, err := roamingDir(t.homeDir)
+	if err != nil {
+		return "", err
 	}
 	return filepath.Join(base, "Microsoft", "Windows", "Start Menu", "Programs"), nil
+}
+
+// roamingDir follows APPDATA, which folder redirection can move off the home folder.
+func roamingDir(home func() (string, error)) (string, error) {
+	if base := os.Getenv("APPDATA"); base != "" {
+		return base, nil
+	}
+	h, err := home()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(h, "AppData", "Roaming"), nil
 }
 
 // psQuote doubles every quote PowerShell ends a single-quoted string on: the ASCII one and U+2018-U+201B.

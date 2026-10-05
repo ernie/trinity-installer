@@ -121,3 +121,37 @@ func AppendShortcut(vdf []byte, s Shortcut, startDir string) ([]byte, uint32, er
 	out, err := EncodeBinaryVDF(root)
 	return out, id, err
 }
+
+// RemoveShortcut deletes every shortcut whose Exe is exe; the other entries keep their indexes, and with none found it returns vdf unchanged.
+func RemoveShortcut(vdf []byte, exe string) ([]byte, bool, error) {
+	if len(vdf) == 0 {
+		return vdf, false, nil
+	}
+	root, err := ParseBinaryVDF(vdf)
+	if err != nil {
+		return nil, false, err
+	}
+	want := normalizeExe(exe)
+	removed := false
+	for k, v := range root {
+		list, ok := v.(map[string]any)
+		if !ok || !strings.EqualFold(k, "shortcuts") {
+			continue
+		}
+		for idx, e := range list {
+			entry, ok := e.(map[string]any)
+			if !ok {
+				continue
+			}
+			if have, _ := entry["Exe"].(string); normalizeExe(have) == want {
+				delete(list, idx)
+				removed = true
+			}
+		}
+	}
+	if !removed {
+		return vdf, false, nil
+	}
+	out, err := EncodeBinaryVDF(root)
+	return out, err == nil, err
+}

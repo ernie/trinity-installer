@@ -222,9 +222,11 @@ func setup(t *testing.T) (*Target, *fakeSession, install.Options) {
 	tg.Poll = time.Millisecond
 	tg.ResponsePath = func() string { return "/tmp/trinity-installer-1/registered" }
 	opts := install.Options{
-		Fetch: func(context.Context, release.Spec, func(string)) ([]byte, error) { return zipOf(frameFiles...), nil },
-		Paks:  localPaks(t),
-		Art:   map[string][]byte{"capsule": {1}, "wide": {2}, "hero": {3}, "logo": {4}, "icon": {5}},
+		Fetch: func(context.Context, release.Spec, func(string)) ([]byte, string, error) {
+			return zipOf(frameFiles...), "v1", nil
+		},
+		Paks: localPaks(t),
+		Art:  map[string][]byte{"capsule": {1}, "wide": {2}, "hero": {3}, "logo": {4}, "icon": {5}},
 	}
 	return tg, sess, opts
 }

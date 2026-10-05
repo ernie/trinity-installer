@@ -79,6 +79,7 @@ type fakeTarget struct {
 	paksDir    string
 	spec       release.Spec
 	reconnects int
+	tag        string
 }
 
 func newFakeTarget(steps ...target.Step) *fakeTarget {
@@ -104,6 +105,7 @@ func (f *fakeTarget) PushPackage(ctx context.Context, pkg *release.Package, log 
 	if err := f.hook("package"); err != nil {
 		return err
 	}
+	f.tag = pkg.Tag
 	for _, e := range pkg.Entries {
 		rc, err := e.Open()
 		if err != nil {

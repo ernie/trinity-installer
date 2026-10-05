@@ -2,6 +2,11 @@
 
 package local
 
-import "os/exec"
+import (
+	"errors"
+	"os/exec"
+)
 
 func hideWindow(*exec.Cmd) {}
+
+func startDetached(string, string) error { return errors.ErrUnsupported }

@@ -21,6 +21,7 @@ type Package struct {
 	Spec    Spec
 	Raw     []byte
 	Entries []Entry
+	Tag     string // the release it came from, for the installed version a target records
 }
 
 // Open validates a downloaded asset; zips get their shared top-level directory stripped, like the engine's updater does.

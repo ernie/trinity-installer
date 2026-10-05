@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -25,6 +26,9 @@ type Target struct {
 	appID          uint32
 	steamVRRunning func() (bool, error)
 	steamRunning   func() (bool, error)
+	registry       registryWriter
+	tag            string
+	rec            installRecord // what this install wrote, so the uninstaller removes exactly that
 }
 
 func New(o Options) *Target {
@@ -35,6 +39,7 @@ func New(o Options) *Target {
 		homeErr:        err,
 		steamVRRunning: func() (bool, error) { return processRunning(o.GOOS, "vrserver") },
 		steamRunning:   func() (bool, error) { return processRunning(o.GOOS, "steam") },
+		registry:       defaultRegistry(),
 	}
 }
 
@@ -92,9 +97,18 @@ func (t *Target) Done() string {
 }
 
 func (t *Target) PrepareDestination(ctx context.Context, log func(string)) (string, error) {
-	for _, d := range []string{t.opts.InstallDir, filepath.Join(t.opts.PaksDir, "baseq3"), filepath.Join(t.opts.PaksDir, "missionpack")} {
+	t.loadRecord()
+	for i, d := range []string{t.opts.InstallDir, filepath.Join(t.opts.PaksDir, "baseq3"), filepath.Join(t.opts.PaksDir, "missionpack")} {
+		_, statErr := os.Stat(d)
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return "", err
+		}
+		if errors.Is(statErr, fs.ErrNotExist) {
+			if i == 0 {
+				t.rec.CreatedInstallDir = true
+			} else {
+				t.recordDir(d)
+			}
 		}
 	}
 	log("install dir " + t.opts.InstallDir)
@@ -102,6 +116,7 @@ func (t *Target) PrepareDestination(ctx context.Context, log func(string)) (stri
 }
 
 func (t *Target) PushPackage(ctx context.Context, pkg *release.Package, log func(string)) error {
+	t.tag = pkg.Tag
 	if pkg.Spec.Kind == release.KindDMG {
 		return t.installDMG(ctx, pkg.Raw, log)
 	}
@@ -114,11 +129,14 @@ func (t *Target) PushPackage(ctx context.Context, pkg *release.Package, log func
 		if err != nil {
 			return err
 		}
-		err = s.Put(ctx, filepath.Join(t.opts.InstallDir, filepath.FromSlash(e.Rel)), rc, e.Size(), packageMode(e.Rel, e.File.Mode()))
+		dst := filepath.Join(t.opts.InstallDir, filepath.FromSlash(e.Rel))
+		t.noteNewDirs(filepath.Dir(dst))
+		err = s.Put(ctx, dst, rc, e.Size(), packageMode(e.Rel, e.File.Mode()))
 		rc.Close()
 		if err != nil {
 			return fmt.Errorf("%s: %w", e.Rel, err)
 		}
+		t.recordFile(dst)
 		log("installed " + e.Rel)
 	}
 	if t.opts.GOOS == "linux" && t.opts.Icon != nil {
@@ -127,7 +145,12 @@ func (t *Target) PushPackage(ctx context.Context, pkg *release.Package, log func
 		}
 		log("installed trinity.png")
 	}
-	return nil
+	if t.opts.GOOS == "windows" {
+		if err := t.copyUninstaller(ctx, log); err != nil {
+			return err
+		}
+	}
+	return t.saveRecord(ctx)
 }
 
 // packageMode marks the engine's binaries executable even when the zip lost their exec bits.
@@ -151,18 +174,23 @@ func (t *Target) RegisterLaunchEntry(ctx context.Context, log func(string)) erro
 	if err := t.registerDesktopEntry(ctx, log); err != nil {
 		return err
 	}
-	if !t.steamShortcut() {
-		return nil
+	if t.steamShortcut() {
+		// Steam rewrites shortcuts.vdf from memory when it exits, which would drop a shortcut written now.
+		running, err := t.steamRunning()
+		if err != nil {
+			return fmt.Errorf("could not tell whether Steam is running: %w", err)
+		}
+		if running {
+			return errors.New("Steam is running. Close Steam, then press Retry.")
+		}
+		if err := t.registerSteamShortcut(ctx, log); err != nil {
+			return err
+		}
 	}
-	// Steam rewrites shortcuts.vdf from memory when it exits, which would drop a shortcut written now.
-	running, err := t.steamRunning()
-	if err != nil {
-		return fmt.Errorf("could not tell whether Steam is running: %w", err)
+	if t.opts.GOOS == "windows" {
+		return t.registerUninstall(ctx, log)
 	}
-	if running {
-		return errors.New("Steam is running. Close Steam, then press Retry.")
-	}
-	return t.registerSteamShortcut(ctx, log)
+	return nil
 }
 
 func (t *Target) registerDesktopEntry(ctx context.Context, log func(string)) error {
@@ -230,6 +258,11 @@ func (t *Target) RegisterVR(ctx context.Context, appID uint32, art map[string][]
 	manifest := filepath.Join(t.opts.InstallDir, "trinity.vrmanifest")
 	key := map[string]string{"windows": "binary_path_windows", "linux": "binary_path_linux"}[t.opts.GOOS]
 	if err := os.WriteFile(manifest, steam.Manifest(t.opts.InstallDir, filepath.Base(t.exe()), appID, key, ""), 0o644); err != nil {
+		return err
+	}
+	t.recordFile(filepath.Join(t.opts.InstallDir, "trinity-capsule.png"))
+	t.recordFile(manifest)
+	if err := t.saveRecord(ctx); err != nil {
 		return err
 	}
 	running, err := t.steamVRRunning()

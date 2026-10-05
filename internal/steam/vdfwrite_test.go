@@ -104,3 +104,78 @@ func TestLibraries(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+func TestRemoveShortcutDropsOnlyTheMatchingEntry(t *testing.T) {
+	exe := `C:\T\trinity.exe`
+	other := map[string]any{"AppName": "Other", "Exe": `"C:\Other\other.exe"`, "appid": int32(7)}
+	last := map[string]any{"AppName": "Last", "Exe": `"C:\Last\last.exe"`, "appid": int32(9)}
+	in, err := EncodeBinaryVDF(map[string]any{"shortcuts": map[string]any{
+		"0": other,
+		"1": map[string]any{"AppName": "Trinity", "Exe": `"` + exe + `"`, "appid": int32(5)},
+		"2": last,
+	}, "extra": "kept"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, removed, err := RemoveShortcut(in, `C:/T/trinity.exe`)
+	if err != nil || !removed {
+		t.Fatalf("%v %v", removed, err)
+	}
+	m, err := ParseBinaryVDF(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"shortcuts": map[string]any{"0": other, "2": last}, "extra": "kept"}
+	if !reflect.DeepEqual(m, want) {
+		t.Fatalf("%+v", m)
+	}
+	again, removed, err := RemoveShortcut(out, exe)
+	if err != nil || removed || !reflect.DeepEqual(again, out) {
+		t.Fatalf("absent shortcut: %v %v", removed, err)
+	}
+	if b, removed, err := RemoveShortcut(nil, exe); err != nil || removed || len(b) != 0 {
+		t.Fatalf("empty file: %v %v", removed, err)
+	}
+	if _, _, err := RemoveShortcut([]byte{0x07}, exe); err == nil {
+		t.Fatal("a malformed file must not be rewritten")
+	}
+}
+
+func TestRemoveShortcutUndoesAppendShortcut(t *testing.T) {
+	b, _ := os.ReadFile("testdata/shortcuts.vdf")
+	exe := `C:\Users\me\AppData\Local\Trinity\trinity.exe`
+	added, _, err := AppendShortcut(b, Shortcut{AppName: "Trinity", Exe: exe}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, removed, err := RemoveShortcut(added, exe)
+	if err != nil || !removed {
+		t.Fatalf("%v %v", removed, err)
+	}
+	m1, _ := ParseBinaryVDF(b)
+	m2, _ := ParseBinaryVDF(out)
+	if !reflect.DeepEqual(m1, m2) {
+		t.Fatalf("%+v\nvs\n%+v", m2, m1)
+	}
+}
+
+func TestRemoveShortcutDropsEveryMatch(t *testing.T) {
+	exe := `C:\T\trinity.exe`
+	other := map[string]any{"AppName": "Other", "Exe": `"C:\Other\other.exe"`}
+	in, err := EncodeBinaryVDF(map[string]any{"shortcuts": map[string]any{
+		"0": map[string]any{"AppName": "Trinity", "Exe": `"` + exe + `"`},
+		"1": other,
+		"2": map[string]any{"AppName": "Trinity copy", "Exe": exe},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, removed, err := RemoveShortcut(in, exe)
+	if err != nil || !removed {
+		t.Fatalf("%v %v", removed, err)
+	}
+	m, _ := ParseBinaryVDF(out)
+	if want := map[string]any{"shortcuts": map[string]any{"1": other}}; !reflect.DeepEqual(m, want) {
+		t.Fatalf("%+v", m)
+	}
+}

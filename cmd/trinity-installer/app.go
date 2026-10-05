@@ -76,6 +76,10 @@ type ui struct {
 	headsetNext                 *widget.Button
 	headsetStatus               *widget.Label
 	doneRestart                 *widget.Button
+	uninstallRemove             *widget.Button
+	uninstallCancel             *widget.Button
+	uninstallSettings           *widget.Check
+	uninstallStatus             *widget.Label
 	rows                        []string
 	rowsView                    *widget.Label
 	logView                     *widget.Entry
@@ -188,20 +192,21 @@ func (u *ui) connect(ctx context.Context, h frame.Headset, onDialog func()) (fra
 
 func (u *ui) installOptions() install.Options {
 	opts := install.Options{
-		Fetch: func(ctx context.Context, spec release.Spec, log func(string)) ([]byte, error) {
+		Fetch: func(ctx context.Context, spec release.Spec, log func(string)) ([]byte, string, error) {
 			client := &http.Client{Timeout: 10 * time.Minute}
 			a, err := release.Latest(ctx, client, spec.API, spec.Asset)
 			if err != nil {
-				return nil, err
+				return nil, "", err
 			}
 			log(fmt.Sprintf("latest release %s, %d MB", a.Tag, a.Size>>20))
 			last := int64(0)
-			return release.Download(ctx, client, a, func(done int64) {
+			raw, err := release.Download(ctx, client, a, func(done int64) {
 				if done-last > 8<<20 || done == a.Size {
 					last = done
 					log(fmt.Sprintf("downloaded %d of %d MB", done>>20, a.Size>>20))
 				}
 			})
+			return raw, a.Tag, err
 		},
 		Carry: u.carry,
 		Paks:  u.validation.LocalPaks(),
