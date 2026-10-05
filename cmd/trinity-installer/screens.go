@@ -14,6 +14,7 @@ import (
 	"github.com/ernie/trinity-installer/internal/frame"
 	"github.com/ernie/trinity-installer/internal/install"
 	"github.com/ernie/trinity-installer/internal/quake3"
+	"github.com/ernie/trinity-installer/internal/target"
 )
 
 // runInstall is a variable so the screen test does not drive a headset.
@@ -150,9 +151,16 @@ func (u *ui) renderValidation() {
 func (u *ui) showInstall() {
 	u.rows = nil
 	u.carry = &install.Carry{}
+	var err error
+	if u.plan, err = target.Plan(context.Background(), u.target); err != nil {
+		msg := widget.NewLabel(err.Error())
+		msg.Wrapping = fyne.TextWrapWord
+		u.show(container.NewBorder(nil, widget.NewButton("Back", func() { u.showQuake3() }), nil, nil, msg))
+		return
+	}
 	rows := container.NewVBox()
-	for _, name := range install.StepNames {
-		l := widget.NewLabel("    " + name)
+	for _, step := range u.plan {
+		l := widget.NewLabel("    " + step.String())
 		u.rows = append(u.rows, l)
 		rows.Add(l)
 	}
@@ -166,29 +174,23 @@ func (u *ui) showInstall() {
 	start = func(from int) {
 		retry.Hide()
 		go func() {
-			var err error
-			if from > 0 {
-				err = u.liveSession(context.Background())
-			}
-			if err == nil {
-				err = run(context.Background(), u.sess, u.installOptions(), from, func(p install.Progress) {
-					if p.Line != "" {
-						u.logf("%s", p.Line)
-					}
-					fyne.Do(func() {
-						mark := map[install.State]string{install.Waiting: "    ", install.Running: ">>  ", install.Done: "OK  ", install.Failed: "!!  "}[p.State]
-						u.rows[p.Step].SetText(mark + p.Name)
-					})
+			err := run(context.Background(), u.target, u.plan, u.installOptions(), from, func(p install.Progress) {
+				if p.Line != "" {
+					u.logf("%s", p.Line)
+				}
+				fyne.Do(func() {
+					mark := map[install.State]string{install.Waiting: "    ", install.Running: ">>  ", install.Done: "OK  ", install.Failed: "!!  "}[p.State]
+					u.rows[p.Index].SetText(mark + p.Step.String())
 				})
-			}
+			})
 			fyne.Do(func() {
 				if err != nil {
 					failed := from
 					var se *install.StepError
 					if errors.As(err, &se) {
-						failed = se.Step
+						failed = se.Index
 					}
-					u.logf("failed at %s; log: %s", install.StepNames[failed], u.logPath())
+					u.logf("failed at %s; log: %s", u.plan[failed], u.logPath())
 					retry.OnTapped = func() { start(failed) }
 					retry.Show()
 					return
@@ -200,24 +202,25 @@ func (u *ui) showInstall() {
 	start(0)
 }
 
-// restartSteam is a variable so the screen test does not reach a headset.
-var restartSteam = func(ctx context.Context, sess frame.Session) error {
-	_, err := sess.Run(ctx, "systemctl --user restart steam.service")
-	return err
-}
+// restartSteam is a variable so the screen test can watch the call.
+var restartSteam = func(ctx context.Context, r target.Restarter) error { return r.RestartSteam(ctx) }
 
 func (u *ui) showDone() {
-	msg := widget.NewLabel("Trinity is in your headset's library under Non-Steam.")
+	text := ""
+	if u.target != nil {
+		text = u.target.Done()
+	}
+	msg := widget.NewLabel(text)
 	msg.Wrapping = fyne.TextWrapWord
 	items := []fyne.CanvasObject{msg}
-	if u.sess != nil {
+	u.doneRestart = nil
+	if r, ok := u.target.(target.Restarter); ok {
 		note := widget.NewLabel("Steam shows the new entry's artwork after it restarts.")
 		note.Wrapping = fyne.TextWrapWord
 		u.doneRestart = widget.NewButton("Restart Steam on the headset", func() {
 			u.doneRestart.Disable()
-			sess := u.sess
 			background(func() {
-				err := restartSteam(context.Background(), sess)
+				err := restartSteam(context.Background(), r)
 				fyne.Do(func() {
 					if err != nil {
 						msg.SetText("Could not restart Steam: " + err.Error())
@@ -231,9 +234,7 @@ func (u *ui) showDone() {
 		items = append(items, note, u.doneRestart)
 	}
 	items = append(items, widget.NewButton("Close", func() {
-		if u.sess != nil {
-			u.sess.Close()
-		}
+		u.closeSession()
 		u.app.Quit()
 	}))
 	u.show(container.NewVBox(items...))

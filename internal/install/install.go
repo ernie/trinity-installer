@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ernie/trinity-installer/internal/frame"
+	"github.com/ernie/trinity-installer/internal/patch"
 	"github.com/ernie/trinity-installer/internal/quake3"
+	"github.com/ernie/trinity-installer/internal/release"
+	"github.com/ernie/trinity-installer/internal/target"
 )
 
 type State int
@@ -18,95 +20,94 @@ const (
 )
 
 type Progress struct {
-	Step  int
-	Name  string
+	Index int
+	Step  target.Step
 	State State
 	Line  string
 }
 
 type Options struct {
-	GameID       string
-	Fetch        func(ctx context.Context, log func(string)) ([]byte, error)
-	Paks         []quake3.Pak
-	Art          map[string][]byte
-	ResponsePath func() string
-	// Carry keeps what finished steps produced, so a retry may run on a new session.
+	Fetch     func(ctx context.Context, spec release.Spec, log func(string)) ([]byte, error)
+	Paks      []quake3.Pak
+	PatchRels []string
+	Patch     *patch.Set
+	Art       map[string][]byte
+	// Carry keeps what finished steps produced, so a retry may resume after a reconnect.
 	Carry *Carry
 }
 
-// Carry is the handle that moves a run's state between sessions.
 type Carry struct{ st *state }
 
-var StepNames = []string{
-	"Fetch release",
-	"Prepare title",
-	"Push package",
-	"Push retail paks",
-	"Register shortcut",
-	"Read app id",
-	"Register with SteamVR",
-	"Install artwork",
-}
-
 type StepError struct {
-	Step int
-	Err  error
+	Index int
+	Step  target.Step
+	Err   error
 }
 
-func (e *StepError) Error() string { return fmt.Sprintf("%s: %v", StepNames[e.Step], e.Err) }
+func (e *StepError) Error() string { return fmt.Sprintf("%s: %v", e.Step, e.Err) }
 func (e *StepError) Unwrap() error { return e.Err }
 
-// state carries what earlier steps produced; Retry from a step reuses it.
 type state struct {
-	opts     Options
-	sess     frame.Session
-	titleDir string
-	zip      []byte
-	userID   string
-	appID    uint32
+	opts    Options
+	pkg     *release.Package
+	paksDir string
+	appID   uint32
 }
 
-type stepFunc func(ctx context.Context, st *state, log func(string)) error
-
-func steps() []stepFunc {
-	return []stepFunc{fetchRelease, prepareTitle, pushPackage, pushPaks, registerShortcut, readAppID, registerManifest, installArt}
-}
-
-var runs = map[frame.Session]*state{}
-
-// Run executes the steps from index from; a retry reuses the state in opts.Carry, or the previous run's on the same session when Carry is nil.
-func Run(ctx context.Context, sess frame.Session, opts Options, from int, report func(Progress)) error {
+// Run performs plan[from:] against t; a retry (from > 0) first asks the target to reconnect.
+func Run(ctx context.Context, t target.Target, plan []target.Step, opts Options, from int, report func(Progress)) error {
 	var st *state
-	if opts.Carry != nil {
+	if opts.Carry != nil && opts.Carry.st != nil && from > 0 {
 		st = opts.Carry.st
 	} else {
-		st = runs[sess]
-	}
-	if st == nil || from == 0 {
 		st = &state{}
 		if opts.Carry != nil {
 			opts.Carry.st = st
-		} else {
-			runs[sess] = st
 		}
 	}
-	st.opts, st.sess = opts, sess
-	if st.opts.GameID == "" {
-		st.opts.GameID = "Trinity"
-	}
-	if st.opts.ResponsePath == nil {
-		st.opts.ResponsePath = defaultResponsePath
-	}
-	all := steps()
-	for i := from; i < len(all); i++ {
-		name := StepNames[i]
-		report(Progress{Step: i, Name: name, State: Running})
-		log := func(line string) { report(Progress{Step: i, Name: name, State: Running, Line: line}) }
-		if err := all[i](ctx, st, log); err != nil {
-			report(Progress{Step: i, Name: name, State: Failed, Line: err.Error()})
-			return &StepError{Step: i, Err: err}
+	st.opts = opts
+	if from > 0 {
+		if err := t.Reconnect(ctx); err != nil {
+			return &StepError{Index: from, Step: plan[from], Err: err}
 		}
-		report(Progress{Step: i, Name: name, State: Done})
+	}
+	for i := from; i < len(plan); i++ {
+		step := plan[i]
+		report(Progress{Index: i, Step: step, State: Running})
+		log := func(line string) { report(Progress{Index: i, Step: step, State: Running, Line: line}) }
+		if err := run(ctx, t, st, step, log); err != nil {
+			report(Progress{Index: i, Step: step, State: Failed, Line: err.Error()})
+			return &StepError{Index: i, Step: step, Err: err}
+		}
+		report(Progress{Index: i, Step: step, State: Done})
 	}
 	return nil
+}
+
+func run(ctx context.Context, t target.Target, st *state, step target.Step, log func(string)) error {
+	switch step {
+	case target.FetchRelease:
+		return fetchRelease(ctx, t, st, log)
+	case target.PrepareDestination:
+		dir, err := t.PrepareDestination(ctx, log)
+		st.paksDir = dir
+		return err
+	case target.PushPackage:
+		return t.PushPackage(ctx, st.pkg, log)
+	case target.PushRetailPaks:
+		return pushPaks(ctx, t.Store(), st, log)
+	case target.PushPatch:
+		return pushPatch(ctx, t.Store(), st, log)
+	case target.RegisterLaunchEntry:
+		return t.RegisterLaunchEntry(ctx, log)
+	case target.ReadAppID:
+		id, err := t.ReadAppID(ctx, log)
+		st.appID = id
+		return err
+	case target.RegisterVR:
+		return t.RegisterVR(ctx, st.appID, st.opts.Art, log)
+	case target.InstallArtwork:
+		return t.InstallArtwork(ctx, st.appID, st.opts.Art, log)
+	}
+	return fmt.Errorf("unknown step %d", step)
 }

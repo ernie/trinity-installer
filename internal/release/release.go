@@ -10,9 +10,6 @@ import (
 	"net/http"
 )
 
-const DefaultAPI = EngineAPI
-const AssetName = "trinity-frame-arm64.zip"
-
 type Asset struct {
 	Tag  string
 	Name string

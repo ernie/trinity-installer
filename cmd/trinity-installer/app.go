@@ -21,6 +21,8 @@ import (
 	"github.com/ernie/trinity-installer/internal/install"
 	"github.com/ernie/trinity-installer/internal/quake3"
 	"github.com/ernie/trinity-installer/internal/release"
+	"github.com/ernie/trinity-installer/internal/target"
+	frametarget "github.com/ernie/trinity-installer/internal/target/frame"
 )
 
 type ui struct {
@@ -35,10 +37,11 @@ type ui struct {
 	headset    frame.Headset
 	signer     ssh.Signer
 	pubLine    string
-	sess       frame.Session
 	quake3Dir  string
 	validation quake3.Validation
 	carry      *install.Carry
+	target     target.Target
+	plan       []target.Step
 
 	// widgets other screens or tests reach into
 	quake3Next                  *widget.Button
@@ -106,12 +109,17 @@ func (u *ui) pair(ctx context.Context, h frame.Headset, onDialog func()) error {
 	if err != nil {
 		return err
 	}
-	if u.sess != nil {
-		u.sess.Close()
-	}
-	u.headset, u.sess = h, sess
+	u.closeSession()
+	u.headset = h
+	u.target = frametarget.New(sess, func(ctx context.Context) (frame.Session, error) { return u.connect(ctx, u.headset, nil) }, "Trinity")
 	u.logf("connected to %s as %s", h.Host, h.Login)
 	return nil
+}
+
+func (u *ui) closeSession() {
+	if ft, ok := u.target.(*frametarget.Target); ok {
+		ft.Session().Close()
+	}
 }
 
 // connect opens a session with the stored key; onDialog, when set, runs before waiting for a pairing approval.
@@ -130,30 +138,11 @@ func (u *ui) connect(ctx context.Context, h frame.Headset, onDialog func()) (fra
 	return sess, err
 }
 
-// liveSession replaces a session the headset dropped, so Retry does not fail on a dead link.
-func (u *ui) liveSession(ctx context.Context) error {
-	probe, cancel := context.WithTimeout(ctx, 2*time.Second)
-	_, err := u.sess.Run(probe, "true")
-	cancel()
-	if err == nil {
-		return nil
-	}
-	sess, err := u.connect(ctx, u.headset, nil)
-	if err != nil {
-		return fmt.Errorf("reconnecting to %s: %w", u.headset.Host, err)
-	}
-	u.sess.Close()
-	u.sess = sess
-	u.logf("reconnected to %s", u.headset.Host)
-	return nil
-}
-
 func (u *ui) installOptions() install.Options {
 	return install.Options{
-		GameID: "Trinity",
-		Fetch: func(ctx context.Context, log func(string)) ([]byte, error) {
+		Fetch: func(ctx context.Context, spec release.Spec, log func(string)) ([]byte, error) {
 			client := &http.Client{Timeout: 10 * time.Minute}
-			a, err := release.Latest(ctx, client, release.DefaultAPI, release.AssetName)
+			a, err := release.Latest(ctx, client, spec.API, spec.Asset)
 			if err != nil {
 				return nil, err
 			}

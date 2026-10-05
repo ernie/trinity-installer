@@ -12,11 +12,15 @@ import (
 	"github.com/ernie/trinity-installer/internal/frame"
 	"github.com/ernie/trinity-installer/internal/install"
 	"github.com/ernie/trinity-installer/internal/quake3"
+	"github.com/ernie/trinity-installer/internal/target"
+	frametarget "github.com/ernie/trinity-installer/internal/target/frame"
 )
 
 func TestScreensBuild(t *testing.T) {
 	// Parked forever: a finishing run would call fyne.Do off the test goroutine and race layout.
-	runInstall = func(context.Context, frame.Session, install.Options, int, func(install.Progress)) error { select {} }
+	runInstall = func(context.Context, target.Target, []target.Step, install.Options, int, func(install.Progress)) error {
+		select {}
+	}
 	discover = func(context.Context, func(frame.Headset)) error { return nil }
 	defer func() { runInstall, discover = install.Run, frame.Discover }()
 
@@ -31,10 +35,14 @@ func TestScreensBuild(t *testing.T) {
 	ui := newUI(a, w, t.TempDir())
 	t.Cleanup(func() { ui.logFile.Close() })
 	ui.quake3Dir = q3
+	ui.target = frametarget.New(&doneSession{}, nil, "Trinity")
 	ui.showHeadset()
 	ui.showQuake3()
 	ui.renderValidation()
 	ui.showInstall()
+	if len(ui.rows) != len(target.Names) {
+		t.Fatalf("%d install rows for the Frame plan", len(ui.rows))
+	}
 	ui.showDone()
 	if ui.quake3Next.Disabled() == false {
 		t.Fatal("Next enabled with a missing patch pak")
@@ -201,26 +209,25 @@ func TestDoneOffersSteamRestartOnTheFrame(t *testing.T) {
 	t.Cleanup(func() { ui.logFile.Close() })
 	ui.showDone()
 	if ui.doneRestart != nil {
-		t.Fatal("restart offered without a headset session")
+		t.Fatal("restart offered without a target")
 	}
 	sess := &doneSession{}
-	ui.sess = sess
+	ui.target = frametarget.New(sess, nil, "Trinity")
 	oldBg, oldRestart := background, restartSteam
 	background = func(f func()) { f() }
-	var got string
-	restartSteam = func(ctx context.Context, s frame.Session) error {
-		_, err := s.Run(ctx, "systemctl --user restart steam.service")
-		got = "called"
-		return err
+	calls := 0
+	restartSteam = func(ctx context.Context, r target.Restarter) error {
+		calls++
+		return oldRestart(ctx, r)
 	}
 	defer func() { background, restartSteam = oldBg, oldRestart }()
 	ui.showDone()
 	if ui.doneRestart == nil {
-		t.Fatal("restart button missing with a headset session")
+		t.Fatal("restart button missing for the Frame")
 	}
 	ui.doneRestart.OnTapped()
-	if got != "called" || len(sess.cmds) != 1 || sess.cmds[0] != "systemctl --user restart steam.service" {
-		t.Fatalf("%q %v", got, sess.cmds)
+	if calls != 1 || len(sess.cmds) != 1 || sess.cmds[0] != "systemctl --user restart steam.service" {
+		t.Fatalf("%d %v", calls, sess.cmds)
 	}
 	if !ui.doneRestart.Disabled() {
 		t.Fatal("button not disabled after a successful restart")
