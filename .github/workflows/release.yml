@@ -1,0 +1,91 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.25' }
+      - run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev libxkbcommon-dev
+      - run: go test ./...
+      - run: go build -ldflags "-X main.version=${GITHUB_REF_NAME}" -o trinity-installer ./cmd/trinity-installer
+      - run: tar czf trinity-installer-linux-x86_64.tar.gz trinity-installer
+      - uses: actions/upload-artifact@v4
+        with: { name: linux, path: trinity-installer-linux-x86_64.tar.gz }
+  windows:
+    runs-on: windows-latest
+    defaults: { run: { shell: 'msys2 {0}' } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-go
+      - run: go install fyne.io/tools/cmd/fyne@v1.7.3
+      - run: go test ./...
+      - name: Package
+        env:
+          GOFLAGS: -ldflags=-X=main.version=${{ github.ref_name }}
+        run: '"$(go env GOPATH)/bin/fyne" package -os windows -src ./cmd/trinity-installer -icon "$PWD/assets/grid/icon.png" -name "Trinity Installer" -release -app-version ${GITHUB_REF_NAME#v}'
+      - run: |
+          set -e
+          exe=$(find . -name 'Trinity Installer.exe' -print -quit)
+          [ -n "$exe" ] || { echo "Trinity Installer.exe not found" >&2; exit 1; }
+          mv "$exe" trinity-installer-windows-x86_64.exe
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: trinity-installer-windows-x86_64.exe }
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.25' }
+      - run: go install fyne.io/tools/cmd/fyne@v1.7.3
+      - run: go test ./...
+      - run: go build -ldflags "-X main.version=${GITHUB_REF_NAME}" -o trinity-installer ./cmd/trinity-installer
+      - run: '"$(go env GOPATH)/bin/fyne" package -os darwin -executable trinity-installer -icon assets/grid/icon.png -name "Trinity Installer" -release -app-version ${GITHUB_REF_NAME#v}'
+      - name: Sign and notarize
+        env:
+          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          AC_API_KEY_BASE64: ${{ secrets.AC_API_KEY_BASE64 }}
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MACOS_CERTIFICATE_BASE64:-}" ]; then echo "::warning::no signing secrets; ad-hoc build"; exit 0; fi
+          KEYCHAIN=$RUNNER_TEMP/build.keychain-db
+          CERT=$RUNNER_TEMP/cert.p12
+          echo "$MACOS_CERTIFICATE_BASE64" | base64 --decode > "$CERT"
+          echo "$AC_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          chmod 600 "$CERT" "$RUNNER_TEMP/AuthKey.p8"
+          security create-keychain -p pw "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p pw "$KEYCHAIN"
+          security import "$CERT" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k pw "$KEYCHAIN"
+          export AC_API_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          chmod +x scripts/macos-codesign.sh
+          ./scripts/macos-codesign.sh "Trinity Installer.app"
+      - run: ditto -c -k --keepParent "Trinity Installer.app" trinity-installer-macos.zip
+      - uses: actions/upload-artifact@v4
+        with: { name: macos, path: trinity-installer-macos.zip }
+  release:
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { merge-multiple: true }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            trinity-installer-linux-x86_64.tar.gz
+            trinity-installer-windows-x86_64.exe
+            trinity-installer-macos.zip

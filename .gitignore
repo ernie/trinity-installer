@@ -1,0 +1,14 @@
+AGENTS.md
+CLAUDE.md
+docs/superpowers/
+.superpowers/
+.claude/
+.vscode/
+.idea/
+dist/
+build/
+*.exe
+*.app
+*.dmg
+*.syso
+fyne-cross/

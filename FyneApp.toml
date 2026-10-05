@@ -1,0 +1,4 @@
+[Details]
+Icon = "assets/grid/icon.png"
+Name = "Trinity Installer"
+ID = "run.trinity.installer"
