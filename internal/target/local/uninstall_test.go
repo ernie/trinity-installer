@@ -660,7 +660,8 @@ func TestTheDefaultFolderCountsAsCreated(t *testing.T) {
 	fakeSelf(t, "installer")
 	drive := t.TempDir()
 	t.Setenv("SystemDrive", drive)
-	for dir, want := range map[string]bool{filepath.Join(drive, "Games", "Trinity"): true, filepath.Join(t.TempDir(), "Trinity"): false} {
+	// The default is built as the target builds it, so the test holds off Windows too.
+	for dir, want := range map[string]bool{defaultInstallDir("windows", "", drive): true, filepath.Join(t.TempDir(), "Trinity"): false} {
 		os.MkdirAll(dir, 0o755)
 		tg := New(Options{GOOS: "windows", InstallDir: dir, PaksDir: dir})
 		tg.PrepareDestination(context.Background(), func(string) {})

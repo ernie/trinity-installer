@@ -224,7 +224,7 @@ func TestQuietUninstallKeepsSettings(t *testing.T) {
 }
 
 func TestUninstallModeFromTheExeName(t *testing.T) {
-	for _, exe := range []string{`C:\\Users\\me\\AppData\\Local\\Trinity\\uninstall.exe`, `/home/me/trinity/Uninstall`, `D:\\T\\UNINSTALL.EXE`} {
+	for _, exe := range []string{filepath.FromSlash("C:/Users/me/AppData/Local/Trinity/uninstall.exe"), `/home/me/trinity/Uninstall`, filepath.FromSlash("D:/T/UNINSTALL.EXE")} {
 		if u, q := uninstallMode(exe, nil); !u || q {
 			t.Fatalf("%s: uninstall=%v quiet=%v", exe, u, q)
 		}
@@ -232,7 +232,7 @@ func TestUninstallModeFromTheExeName(t *testing.T) {
 			t.Fatalf("%s --quiet: uninstall=%v quiet=%v", exe, u, q)
 		}
 	}
-	if u, _ := uninstallMode(`C:\\T\\trinity-installer.exe`, nil); u {
+	if u, _ := uninstallMode(filepath.FromSlash("C:/T/trinity-installer.exe"), nil); u {
 		t.Fatal("the installer's own name must not uninstall")
 	}
 }

@@ -115,7 +115,7 @@ func TestWindowsDesktopShortcutCommand(t *testing.T) {
 	}
 	for i, mode := range []struct{ lnk, args string }{{"Trinity.lnk", "+set vr_enabled 0"}, {"Trinity (VR).lnk", "+set vr_enabled 1"}} {
 		joined := strings.Join((*cmds)[i], " ")
-		for _, want := range []string{"powershell", "[Environment]::GetFolderPath('Desktop')", "$env:USERPROFILE", "[IO.Directory]::CreateDirectory($d)|Out-Null", "WScript.Shell", `C:\Users\me\AppData\Local\Trinity\trinity.exe`, "Join-Path $d '" + mode.lnk + "'", "$s.Arguments='" + mode.args + "'"} {
+		for _, want := range []string{"powershell", "[Environment]::GetFolderPath('Desktop')", "$env:USERPROFILE", "[IO.Directory]::CreateDirectory($d)|Out-Null", "WScript.Shell", filepath.Join(`C:\Users\me\AppData\Local\Trinity`, "trinity.exe"), "Join-Path $d '" + mode.lnk + "'", "$s.Arguments='" + mode.args + "'"} {
 			if !strings.Contains(joined, want) {
 				t.Fatalf("missing %q in %s", want, joined)
 			}
@@ -138,8 +138,8 @@ func TestWindowsDesktopShortcutCommand(t *testing.T) {
 	*cmds = nil
 	tg = New(Options{GOOS: "windows", InstallDir: `C:\T`, StartMenu: true, Desktop: true, PreferVR: true, AlsoOther: true})
 	tg.RegisterLaunchEntry(context.Background(), func(string) {})
-	if len(*cmds) != 4 || !strings.Contains(strings.Join((*cmds)[0], " "), `Start Menu\Programs\Trinity.lnk`) || !strings.Contains(strings.Join((*cmds)[0], " "), "$s.Arguments='+set vr_enabled 1'") ||
-		!strings.Contains(strings.Join((*cmds)[1], " "), `Start Menu\Programs\Trinity (Flat).lnk`) || !strings.Contains(strings.Join((*cmds)[1], " "), "$s.Arguments='+set vr_enabled 0'") || !strings.Contains(strings.Join((*cmds)[2], " "), "GetFolderPath('Desktop')") {
+	if len(*cmds) != 4 || !strings.Contains(strings.Join((*cmds)[0], " "), filepath.Join("Start Menu", "Programs", "Trinity.lnk")) || !strings.Contains(strings.Join((*cmds)[0], " "), "$s.Arguments='+set vr_enabled 1'") ||
+		!strings.Contains(strings.Join((*cmds)[1], " "), filepath.Join("Start Menu", "Programs", "Trinity (Flat).lnk")) || !strings.Contains(strings.Join((*cmds)[1], " "), "$s.Arguments='+set vr_enabled 0'") || !strings.Contains(strings.Join((*cmds)[2], " "), "GetFolderPath('Desktop')") {
 		t.Fatalf("%v", *cmds)
 	}
 

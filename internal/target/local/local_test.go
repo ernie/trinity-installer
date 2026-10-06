@@ -160,11 +160,11 @@ func TestWindowsShortcutCommand(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 	// A redirected APPDATA moves the Start Menu with it.
-	if !strings.Contains(joined, `$l='D:\Roaming\Microsoft\Windows\Start Menu\Programs\Trinity.lnk'`) || !strings.Contains(joined, "$s.Arguments='+set vr_enabled 1'") {
+	if !strings.Contains(joined, "$l='"+filepath.Join(`D:\Roaming`, "Microsoft", "Windows", "Start Menu", "Programs", "Trinity.lnk")+"'") || !strings.Contains(joined, "$s.Arguments='+set vr_enabled 1'") {
 		t.Fatalf("%v", got)
 	}
 	t.Setenv("APPDATA", "")
-	if err := tg.RegisterLaunchEntry(context.Background(), func(string) {}); err != nil || !strings.Contains(strings.Join(got, " "), `C:\Users\me\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trinity.lnk`) {
+	if err := tg.RegisterLaunchEntry(context.Background(), func(string) {}); err != nil || !strings.Contains(strings.Join(got, " "), filepath.Join(`C:\Users\me`, "AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs", "Trinity.lnk")) {
 		t.Fatalf("%v %v", err, got)
 	}
 	tg.home, tg.homeErr = "", errors.New("no HOME")
