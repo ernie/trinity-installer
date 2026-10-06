@@ -475,7 +475,7 @@ func TestRestartSteam(t *testing.T) {
 
 func TestDoneText(t *testing.T) {
 	tg, _, _ := setup(t)
-	if tg.Done() != "Trinity is in your headset's library under Non-Steam." {
+	if tg.Done() != "Trinity is installed on your Steam Frame. Configuration and pk3 files are at ~/devkit-game/Trinity.\n\nFind it in your library under Non-Steam." {
 		t.Fatalf("%q", tg.Done())
 	}
 }

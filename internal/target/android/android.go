@@ -33,10 +33,15 @@ func (t *Target) Applicable(context.Context) ([]target.Step, error) {
 }
 
 func (t *Target) Done() string {
-	if strings.Contains(t.d.Model, "Quest") {
-		return "Find Trinity in your Library under Unknown Sources."
+	name := t.d.Model
+	if name == "" {
+		name = t.d.Serial
 	}
-	return "Find Trinity in your Library."
+	text := "Trinity is installed on your " + name + ". Configuration and pk3 files are at " + destDir + ".\n\n"
+	if strings.Contains(t.d.Model, "Quest") {
+		return text + "Find it in your Library under Unknown Sources."
+	}
+	return text + "Find it in your Library."
 }
 
 func (t *Target) Reconnect(ctx context.Context) error {

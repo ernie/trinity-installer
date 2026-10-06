@@ -544,7 +544,7 @@ func TestDoneSaysUpdatedOverAnExistingRecord(t *testing.T) {
 	if _, err := tg.PrepareDestination(context.Background(), func(string) {}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(tg.Done(), "Trinity is installed.") {
+	if !strings.HasPrefix(tg.Done(), "Trinity is installed at:") {
 		t.Fatalf("first install: %q", tg.Done())
 	}
 	if err := tg.saveRecord(context.Background()); err != nil {
@@ -554,7 +554,7 @@ func TestDoneSaysUpdatedOverAnExistingRecord(t *testing.T) {
 	if _, err := again.PrepareDestination(context.Background(), func(string) {}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(again.Done(), "Trinity is updated.") {
+	if !strings.HasPrefix(again.Done(), "Trinity is updated at:") {
 		t.Fatalf("re-install: %q", again.Done())
 	}
 }

@@ -85,7 +85,6 @@ func (t *Target) RelaunchSteam(ctx context.Context, log func(string)) error {
 		log("could not start Steam again: " + err.Error())
 		return err
 	}
-	t.steamRelaunched = true
 	log("Steam started again")
 	return nil
 }

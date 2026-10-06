@@ -115,10 +115,6 @@ func TestRelaunchSteamStartsItDetached(t *testing.T) {
 	if cmdLine != `cmd /d /c start "" "`+exe+`"` || dir != filepath.Dir(exe) {
 		t.Fatalf("%q in %q", cmdLine, dir)
 	}
-	// Steam is already back, so the Done text no longer waits for the user to start it.
-	if got := tg.Done(); got != "Trinity is installed. Launch it from the Start Menu, and from Steam." {
-		t.Fatal(got)
-	}
 }
 
 func TestRelaunchSteamFailureIsReportedNotFatal(t *testing.T) {
@@ -128,9 +124,6 @@ func TestRelaunchSteamFailureIsReportedNotFatal(t *testing.T) {
 	err := tg.RelaunchSteam(context.Background(), func(l string) { lines = append(lines, l) })
 	if err == nil || !strings.Contains(strings.Join(lines, "\n"), "cmd.exe missing") {
 		t.Fatalf("%v %q", err, lines)
-	}
-	if got := tg.Done(); !strings.HasSuffix(got, "from Steam the next time you start it.") {
-		t.Fatal(got)
 	}
 }
 

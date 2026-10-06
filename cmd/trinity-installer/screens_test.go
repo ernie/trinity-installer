@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -353,7 +354,7 @@ func TestDeviceScreenBlocksUnauthorized(t *testing.T) {
 	defer func() { listDevices = old }()
 	ui.showDevice()
 	ui.refreshDevices()
-	if ui.deviceList.Length() != 2 || !strings.Contains(ui.deviceText(0), "accept the prompt") {
+	if ui.deviceList.Length() != 2 || !strings.HasSuffix(ui.deviceText(0), " (accept headset prompt)") {
 		t.Fatalf("%q", ui.deviceText(0))
 	}
 	ui.deviceList.Select(0)
@@ -1419,5 +1420,60 @@ func TestPCScreenPlayModeDefaultsWithoutSettings(t *testing.T) {
 	want := map[bool]string{true: "VR", false: "Flatscreen"}[def.PreferVR]
 	if u.pcFolder.Text != remembered || u.pcPlay.Selected != want || u.pcPlay.Selected == "" || !u.pcAlso.Checked {
 		t.Fatalf("folder %q, play %q (SteamVR %q gives %q), also %v", u.pcFolder.Text, u.pcPlay.Selected, def.SteamVRRoot, want, u.pcAlso.Checked)
+	}
+}
+
+func doneScreen(ui *ui) (texts []string, docs *widget.Button) {
+	for _, w := range allWidgets(ui.content) {
+		switch w := w.(type) {
+		case *widget.Label:
+			texts = append(texts, w.Text)
+		case *widget.Button:
+			if w.Text == "Open the docs" {
+				docs = w
+			}
+		}
+	}
+	return texts, docs
+}
+
+func TestDoneShowsTheTargetsTextAndOpensTheDocs(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	ui := newUI(a, a.NewWindow("t"), t.TempDir())
+	t.Cleanup(func() { ui.logFile.Close() })
+	ui.target = frametarget.New(&doneSession{}, nil, "Trinity")
+	var opened []string
+	old := openURL
+	openURL = func(_ fyne.App, u *url.URL) error { opened = append(opened, u.String()); return nil }
+	defer func() { openURL = old }()
+	ui.showDone()
+	texts, docs := doneScreen(ui)
+	if joined := strings.Join(texts, "|"); !strings.Contains(joined, ui.target.Done()) || strings.Contains(joined, "baseq3") {
+		t.Fatalf("%q", joined)
+	}
+	if docs == nil {
+		t.Fatal("no docs button")
+	}
+	docs.OnTapped()
+	if len(opened) != 1 || opened[0] != "https://trinity.run/docs" {
+		t.Fatalf("%v", opened)
+	}
+}
+
+func TestDoneSpellsOutTheDocsLinkWhenTheBrowserWillNotOpen(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	ui := newUI(a, a.NewWindow("t"), t.TempDir())
+	t.Cleanup(func() { ui.logFile.Close() })
+	old := openURL
+	openURL = func(fyne.App, *url.URL) error { return errors.New("no browser") }
+	defer func() { openURL = old }()
+	ui.showDone()
+	_, docs := doneScreen(ui)
+	docs.OnTapped()
+	texts, _ := doneScreen(ui)
+	if !strings.Contains(strings.Join(texts, "|"), "https://trinity.run/docs") {
+		t.Fatalf("%q", texts)
 	}
 }

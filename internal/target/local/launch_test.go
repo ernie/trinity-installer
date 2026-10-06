@@ -86,16 +86,20 @@ func TestDoneNamesTheEntries(t *testing.T) {
 		o    Options
 		want string
 	}{
-		{Options{GOOS: "windows", StartMenu: true, Desktop: true}, "Trinity is installed. Launch it from the Start Menu and the Desktop."},
-		{Options{GOOS: "windows", StartMenu: true}, "Trinity is installed. Launch it from the Start Menu."},
-		{Options{GOOS: "windows", Desktop: true}, "Trinity is installed. Launch it from the Desktop."},
-		{steam(Options{GOOS: "windows", StartMenu: true}), "Trinity is installed. Launch it from the Start Menu, and from Steam the next time you start it."},
-		{steam(Options{GOOS: "windows"}), "Trinity is installed. Launch it from Steam the next time you start it."},
-		{Options{GOOS: "windows", InstallDir: `C:\Games\Trinity`}, `Trinity is installed in C:\Games\Trinity.`},
-		{Options{GOOS: "linux", StartMenu: true, Desktop: true}, "Trinity is installed. Launch it from your applications menu and the Desktop."},
-		{Options{GOOS: "darwin"}, "Trinity is installed. Launch it from Applications."},
+		{steam(Options{GOOS: "windows", InstallDir: `C:\Games\Trinity`, StartMenu: true, Desktop: true}), "Trinity is installed at:\n\nC:\\Games\\Trinity\n\nShortcuts were installed in your Start Menu, on your Desktop and in Steam."},
+		{Options{GOOS: "windows", InstallDir: `C:\Games\Trinity`, StartMenu: true, Desktop: true}, "Trinity is installed at:\n\nC:\\Games\\Trinity\n\nShortcuts were installed in your Start Menu and on your Desktop."},
+		{Options{GOOS: "windows", InstallDir: `C:\Games\Trinity`, Desktop: true}, "Trinity is installed at:\n\nC:\\Games\\Trinity\n\nShortcuts were installed on your Desktop."},
+		{steam(Options{GOOS: "windows", InstallDir: `C:\Games\Trinity`}), "Trinity is installed at:\n\nC:\\Games\\Trinity\n\nShortcuts were installed in Steam."},
+		// No shortcuts asked for: no shortcut sentence.
+		{Options{GOOS: "windows", InstallDir: `C:\Games\Trinity`}, "Trinity is installed at:\n\nC:\\Games\\Trinity"},
+		{Options{GOOS: "linux", InstallDir: "/home/me/.local/share/trinity", StartMenu: true, Desktop: true}, "Trinity is installed at:\n\n~/.local/share/trinity\n\nShortcuts were installed in your applications menu and on your Desktop."},
+		// Only the home folder itself shortens to ~, never a sibling that shares its prefix.
+		{Options{GOOS: "linux", InstallDir: "/home/meow/trinity"}, "Trinity is installed at:\n\n/home/meow/trinity"},
+		{Options{GOOS: "darwin", InstallDir: "/home/me/Applications", PaksDir: "/home/me/Library/Application Support/Trinity"}, "Trinity is installed at:\n\n~/Applications/Trinity.app\n\nConfiguration and pk3 files are at ~/Library/Application Support/Trinity."},
 	} {
-		if got := New(c.o).Done(); got != c.want {
+		tg := New(c.o)
+		tg.home = "/home/me"
+		if got := tg.Done(); got != c.want {
 			t.Errorf("%+v:\n%s\nwant %s", c.o, got, c.want)
 		}
 	}

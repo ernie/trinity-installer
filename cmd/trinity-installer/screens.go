@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -365,6 +366,11 @@ func (u *ui) showInstall() {
 // restartSteam is a variable so the screen test can watch the call.
 var restartSteam = func(ctx context.Context, r target.Restarter) error { return r.RestartSteam(ctx) }
 
+const docsURL = "https://trinity.run/docs"
+
+// openURL is a variable so the screen test can watch the call without a browser.
+var openURL = func(a fyne.App, u *url.URL) error { return a.OpenURL(u) }
+
 func (u *ui) showDone() {
 	text := ""
 	if u.target != nil {
@@ -393,9 +399,21 @@ func (u *ui) showDone() {
 		})
 		items = append(items, note, u.doneRestart)
 	}
-	items = append(items, widget.NewButton("Close", func() {
+	link := widget.NewLabel("")
+	link.Wrapping = fyne.TextWrapWord
+	link.Hide()
+	docs := widget.NewButton("Open the docs", func() {
+		page, _ := url.Parse(docsURL)
+		if err := openURL(u.app, page); err != nil {
+			u.logf("could not open %s: %v", docsURL, err)
+			link.SetText("Your browser did not open; the docs are at " + docsURL)
+			link.Show()
+		}
+	})
+	closeButton := widget.NewButton("Close", func() {
 		u.closeSession()
 		u.app.Quit()
-	}))
+	})
+	items = append(items, link, buttonRow(docs, closeButton))
 	u.show(container.NewVBox(items...))
 }

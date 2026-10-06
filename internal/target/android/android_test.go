@@ -104,11 +104,15 @@ func TestPushPackageFailureHintsAtUninstall(t *testing.T) {
 
 func TestDoneByModel(t *testing.T) {
 	f := &fake{}
-	if d := New(f.adb(), quest).Done(); !strings.Contains(d, "Unknown Sources") {
+	if d := New(f.adb(), quest).Done(); d != "Trinity is installed on your Quest 3. Configuration and pk3 files are at /sdcard/Trinity.\n\nFind it in your Library under Unknown Sources." {
 		t.Fatal(d)
 	}
 	pico := adb.Device{Serial: "PB324XJGL2090068G", Model: "A9210", State: "device"}
-	if d := New(f.adb(), pico).Done(); strings.Contains(d, "Unknown Sources") || !strings.Contains(d, "Library") {
+	if d := New(f.adb(), pico).Done(); d != "Trinity is installed on your A9210. Configuration and pk3 files are at /sdcard/Trinity.\n\nFind it in your Library." {
+		t.Fatal(d)
+	}
+	// A headset that reports no model is named by its serial, as the device list names it.
+	if d := New(f.adb(), adb.Device{Serial: "PB324XJGL2090068G"}).Done(); !strings.HasPrefix(d, "Trinity is installed on your PB324XJGL2090068G.") {
 		t.Fatal(d)
 	}
 }

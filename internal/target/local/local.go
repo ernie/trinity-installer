@@ -33,12 +33,11 @@ type Target struct {
 	startMenuLnks []string      // the shortcuts this run wrote; empty when not asked for or not written
 	desktopLnks   []string
 	// wait, detach and spawn are seams so tests neither sleep nor start programs.
-	wait            func(time.Duration) <-chan time.Time
-	detach          func(cmdLine, dir string) error
-	spawn           func(name string, args ...string) error
-	steamRelaunched bool
-	closedSteam     bool // the installer closed Steam and owes the user a relaunch
-	entryWritten    bool // the Settings > Apps entry exists, so later steps keep its size current
+	wait         func(time.Duration) <-chan time.Time
+	detach       func(cmdLine, dir string) error
+	spawn        func(name string, args ...string) error
+	closedSteam  bool // the installer closed Steam and owes the user a relaunch
+	entryWritten bool // the Settings > Apps entry exists, so later steps keep its size current
 }
 
 // launchMode is one shortcut; the engine keeps a command-line vr_enabled for that session only, so the menu's own choice survives.
@@ -130,29 +129,47 @@ func (t *Target) Done() string {
 	if t.updated {
 		state = "updated"
 	}
+	game := t.opts.InstallDir
 	if t.opts.GOOS == "darwin" {
-		return "Trinity is " + state + ". Launch it from Applications."
+		game = joinFor(t.opts.GOOS, game, "Trinity.app")
+	}
+	text := "Trinity is " + state + " at:\n\n" + t.tilde(game)
+	// Only macOS keeps the paks apart from the game, in the engine's home folder.
+	if t.opts.GOOS == "darwin" {
+		return text + "\n\nConfiguration and pk3 files are at " + t.tilde(t.opts.PaksDir) + "."
 	}
 	var where []string
 	if t.opts.StartMenu {
-		where = append(where, map[string]string{"windows": "the Start Menu", "linux": "your applications menu"}[t.opts.GOOS])
+		where = append(where, map[string]string{"windows": "in your Start Menu", "linux": "in your applications menu"}[t.opts.GOOS])
 	}
 	if t.opts.Desktop {
-		where = append(where, "the Desktop")
+		where = append(where, "on your Desktop")
 	}
-	fromSteam := "Steam the next time you start it"
-	if t.steamRelaunched {
-		fromSteam = "Steam"
+	if t.steamShortcut() {
+		where = append(where, "in Steam")
 	}
-	switch {
-	case len(where) > 0 && t.steamShortcut():
-		return "Trinity is " + state + ". Launch it from " + strings.Join(where, " and ") + ", and from " + fromSteam + "."
-	case len(where) > 0:
-		return "Trinity is " + state + ". Launch it from " + strings.Join(where, " and ") + "."
-	case t.steamShortcut():
-		return "Trinity is " + state + ". Launch it from " + fromSteam + "."
+	if len(where) == 0 {
+		return text
 	}
-	return "Trinity is " + state + " in " + t.opts.InstallDir + "."
+	list := where[len(where)-1]
+	if len(where) > 1 {
+		list = strings.Join(where[:len(where)-1], ", ") + " and " + list
+	}
+	return text + "\n\nShortcuts were installed " + list + "."
+}
+
+// tilde shows the home folder as ~ on macOS and Linux, where users read paths that way; Windows paths stay whole.
+func (t *Target) tilde(p string) string {
+	if t.opts.GOOS == "windows" || t.home == "" {
+		return p
+	}
+	if p == t.home {
+		return "~"
+	}
+	if rest, ok := strings.CutPrefix(p, strings.TrimRight(t.home, "/")+"/"); ok {
+		return "~/" + rest
+	}
+	return p
 }
 
 func (t *Target) PrepareDestination(ctx context.Context, log func(string)) (string, error) {

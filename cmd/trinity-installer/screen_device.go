@@ -144,9 +144,9 @@ func (u *ui) deviceText(i int) string {
 	switch d.State {
 	case "device":
 	case "unauthorized":
-		s += " — accept the prompt on the headset"
+		s += " (accept headset prompt)"
 	default:
-		s += " — " + d.State
+		s += " (" + d.State + ")"
 	}
 	return s
 }

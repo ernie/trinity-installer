@@ -37,6 +37,7 @@ type Target interface {
 	ReadAppID(ctx context.Context, log func(string)) (uint32, error)
 	RegisterVR(ctx context.Context, appID uint32, art map[string][]byte, log func(string)) error
 	InstallArtwork(ctx context.Context, appID uint32, art map[string][]byte, log func(string)) error
+	// Done is the Done screen's text: where Trinity went and where to find it.
 	Done() string
 	Reconnect(ctx context.Context) error
 }

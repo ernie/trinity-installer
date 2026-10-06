@@ -50,7 +50,9 @@ func (t *Target) Session() frame.Session { return t.sess }
 func (t *Target) Name() string           { return "Steam Frame" }
 func (t *Target) Asset() release.Spec    { return release.FrameSpec() }
 func (t *Target) Store() store.Store     { return store.SFTP(t.sess) }
-func (t *Target) Done() string           { return "Trinity is in your headset's library under Non-Steam." }
+func (t *Target) Done() string {
+	return "Trinity is installed on your Steam Frame. Configuration and pk3 files are at ~/devkit-game/" + t.gameID + ".\n\nFind it in your library under Non-Steam."
+}
 
 func (t *Target) Applicable(context.Context) ([]target.Step, error) {
 	return []target.Step{target.PushPatch, target.RegisterLaunchEntry, target.ReadAppID, target.RegisterVR, target.InstallArtwork}, nil
