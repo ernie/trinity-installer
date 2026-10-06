@@ -10,7 +10,6 @@ require (
 	github.com/ncruces/zenity v0.10.15
 	github.com/pkg/sftp v1.13.11
 	golang.org/x/crypto v0.57.0
-	golang.org/x/image v0.46.0
 	golang.org/x/sys v0.48.0
 )
 
@@ -50,6 +49,7 @@ require (
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/yuin/goldmark v1.8.2 // indirect
+	golang.org/x/image v0.46.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
