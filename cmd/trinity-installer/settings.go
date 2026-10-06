@@ -9,6 +9,9 @@ import (
 // settings is what the installer remembers between runs, in its own config folder.
 type settings struct {
 	InstallDir string `json:"installDir"` // the folder last confirmed on the Destination screen
+	// The play choices last confirmed there; absent until then, so the SteamVR-based default applies.
+	PreferVR  *bool `json:"preferVR,omitempty"`
+	AlsoOther *bool `json:"alsoOther,omitempty"`
 }
 
 func settingsPath(cfgDir string) string { return filepath.Join(cfgDir, "settings.json") }

@@ -7,9 +7,11 @@ import (
 )
 
 type Shortcut struct {
-	AppID   uint32
-	AppName string
-	Exe     string
+	AppID         uint32
+	AppName       string
+	Exe           string
+	LaunchOptions string
+	OpenVR        bool // "Include in VR Library"
 }
 
 func ParseShortcuts(b []byte) ([]Shortcut, error) {
@@ -38,6 +40,9 @@ func ParseShortcuts(b []byte) ([]Shortcut, error) {
 		}
 		s.AppName, _ = e["AppName"].(string)
 		s.Exe, _ = e["Exe"].(string)
+		s.LaunchOptions, _ = e["LaunchOptions"].(string)
+		vr, _ := e["OpenVR"].(int32)
+		s.OpenVR = vr != 0
 		out = append(out, s)
 	}
 	return out, nil

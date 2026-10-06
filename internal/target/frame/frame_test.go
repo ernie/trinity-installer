@@ -289,7 +289,7 @@ func TestRunHappyPath(t *testing.T) {
 			t.Fatalf("missing %q in\n%s", want, files)
 		}
 	}
-	if got := string(sess.files["/home/steamos/devkit-game/Trinity-argv.json"].data); got != `["trinity"]` {
+	if got := string(sess.files["/home/steamos/devkit-game/Trinity-argv.json"].data); got != `["trinity","+set","vr_enabled","1","+set","vr_mirrorEnabled","0"]` {
 		t.Fatalf("argv %q", got)
 	}
 	if got := string(sess.files["/home/steamos/devkit-game/Trinity-settings.json"].data); !strings.Contains(got, `"compat_tool": "SteamLinuxRuntime_4-arm64"`) {
@@ -298,7 +298,7 @@ func TestRunHappyPath(t *testing.T) {
 	if got := sess.files["/home/steamos/devkit-game/Trinity/trinity-capsule.png"].data; !bytes.Equal(got, []byte{1}) {
 		t.Fatalf("capsule %v", got)
 	}
-	if !strings.Contains(string(sess.files["/home/steamos/devkit-game/Trinity/trinity.vrmanifest"].data), "steam.app.2634369398") {
+	if m := string(sess.files["/home/steamos/devkit-game/Trinity/trinity.vrmanifest"].data); !strings.Contains(m, "steam.app.2634369398") || !strings.Contains(m, `"arguments": "+set vr_enabled 1 +set vr_mirrorEnabled 0"`) {
 		t.Fatal("manifest does not name the app id")
 	}
 	if sess.ran("--appmanifest /home/steamos/devkit-game/Trinity/trinity.vrmanifest") != 1 || sess.ran("--dumpapps") != 1 {

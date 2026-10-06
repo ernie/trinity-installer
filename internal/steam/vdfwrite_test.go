@@ -93,6 +93,59 @@ func TestAppendShortcutStampsAnEntryWithoutAnAppID(t *testing.T) {
 	}
 }
 
+func TestAppendShortcutKeepsOneEntryPerName(t *testing.T) {
+	exe := `C:\Games\Trinity\trinity.exe`
+	vdf, vrID, err := AppendShortcut(nil, Shortcut{AppName: "Trinity", Exe: exe, LaunchOptions: "+set vr_enabled 1", OpenVR: true}, `C:\Games\Trinity`)
+	if err != nil || vrID != ShortcutAppID(exe, "Trinity") {
+		t.Fatalf("%d %v", vrID, err)
+	}
+	vdf, flatID, err := AppendShortcut(vdf, Shortcut{AppName: "Trinity (Flat)", Exe: exe, LaunchOptions: "+set vr_enabled 0"}, `C:\Games\Trinity`)
+	if err != nil || flatID != ShortcutAppID(exe, "Trinity (Flat)") || flatID == vrID {
+		t.Fatalf("%d %v", flatID, err)
+	}
+	list, err := ParseShortcuts(vdf)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("one exe, two names must give two shortcuts: %+v %v", list, err)
+	}
+	got := map[string]Shortcut{}
+	for _, s := range list {
+		got[s.AppName] = s
+	}
+	if s := got["Trinity"]; s.AppID != vrID || s.LaunchOptions != "+set vr_enabled 1" || !s.OpenVR {
+		t.Fatalf("%+v", s)
+	}
+	if s := got["Trinity (Flat)"]; s.AppID != flatID || s.LaunchOptions != "+set vr_enabled 0" || s.OpenVR {
+		t.Fatalf("%+v", s)
+	}
+	m, _ := ParseBinaryVDF(vdf)
+	if e := m["shortcuts"].(map[string]any)["0"].(map[string]any); e["OpenVR"] != int32(1) || e["LaunchOptions"] != "+set vr_enabled 1" {
+		t.Fatalf("%+v", e)
+	}
+	// The same name again updates that entry instead of adding one.
+	again, id, err := AppendShortcut(vdf, Shortcut{AppName: "Trinity", Exe: exe, LaunchOptions: "+set vr_enabled 0"}, "")
+	if err != nil || id != vrID {
+		t.Fatalf("%d %v", id, err)
+	}
+	list = mustParse(t, again)
+	if len(list) != 2 {
+		t.Fatalf("%+v", list)
+	}
+	for _, s := range list {
+		if s.AppName == "Trinity" && (s.LaunchOptions != "+set vr_enabled 0" || s.OpenVR) {
+			t.Fatalf("the existing entry kept its old launch: %+v", s)
+		}
+	}
+}
+
+func mustParse(t *testing.T, b []byte) []Shortcut {
+	t.Helper()
+	list, err := ParseShortcuts(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return list
+}
+
 func TestLibraries(t *testing.T) {
 	root := t.TempDir()
 	lib := filepath.Join(root, "lib2")
@@ -177,5 +230,56 @@ func TestRemoveShortcutDropsEveryMatch(t *testing.T) {
 	m, _ := ParseBinaryVDF(out)
 	if want := map[string]any{"shortcuts": map[string]any{"1": other}}; !reflect.DeepEqual(m, want) {
 		t.Fatalf("%+v", m)
+	}
+}
+
+func TestRemoveShortcutsExceptKeepsTheNamedOnes(t *testing.T) {
+	exe := `C:\T\trinity.exe`
+	other := map[string]any{"AppName": "Trinity", "Exe": `"C:\Other\trinity.exe"`, "appid": int32(7)}
+	kept := map[string]any{"AppName": "Trinity", "Exe": `"` + exe + `"`, "appid": int32(5), "IsHidden": int32(1)}
+	in, err := EncodeBinaryVDF(map[string]any{"shortcuts": map[string]any{
+		"0": other,
+		"1": kept,
+		"2": map[string]any{"AppName": "Trinity (VR)", "Exe": `"` + exe + `"`, "appid": int32(6)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, removed, err := RemoveShortcutsExcept(in, exe, []string{"Trinity", "Trinity (Flat)"})
+	if err != nil || !removed {
+		t.Fatalf("%v %v", removed, err)
+	}
+	m, _ := ParseBinaryVDF(out)
+	if want := map[string]any{"shortcuts": map[string]any{"0": other, "1": kept}}; !reflect.DeepEqual(m, want) {
+		t.Fatalf("%+v", m)
+	}
+	if again, removed, err := RemoveShortcutsExcept(out, exe, []string{"Trinity"}); err != nil || removed || !reflect.DeepEqual(again, out) {
+		t.Fatalf("nothing to remove: %v %v", removed, err)
+	}
+}
+
+func TestRemoveShortcutsExceptKeepsOnlyTheFirstOfADuplicatedName(t *testing.T) {
+	exe := `C:\T\trinity.exe`
+	first := map[string]any{"AppName": "Trinity", "Exe": `"` + exe + `"`, "appid": int32(5), "LaunchOptions": "+set vr_enabled 1"}
+	in, err := EncodeBinaryVDF(map[string]any{"shortcuts": map[string]any{
+		"2":  first,
+		"10": map[string]any{"AppName": "Trinity", "Exe": `"` + exe + `"`, "appid": int32(5), "LaunchOptions": "+set vr_enabled 0"},
+		"3":  map[string]any{"AppName": "Trinity", "Exe": exe, "appid": int32(5), "OpenVR": int32(1)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, removed, err := RemoveShortcutsExcept(in, exe, []string{"Trinity"})
+	if err != nil || !removed {
+		t.Fatalf("%v %v", removed, err)
+	}
+	m, _ := ParseBinaryVDF(out)
+	if want := map[string]any{"shortcuts": map[string]any{"2": first}}; !reflect.DeepEqual(m, want) {
+		t.Fatalf("only the lowest index of a kept name may stay: %+v", m)
+	}
+	// What AppendShortcut then updates is that one entry.
+	out, _, err = AppendShortcut(out, Shortcut{AppName: "Trinity", Exe: exe, LaunchOptions: "+set vr_enabled 0"}, "")
+	if list := mustParse(t, out); err != nil || len(list) != 1 || list[0].LaunchOptions != "+set vr_enabled 0" || list[0].OpenVR {
+		t.Fatalf("%+v %v", list, err)
 	}
 }

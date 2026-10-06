@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -71,7 +72,7 @@ func ShortcutAppID(exe, appName string) uint32 {
 	return crc32.ChecksumIEEE([]byte(exe+appName)) | 0x80000000
 }
 
-// AppendShortcut adds s to the file unless a shortcut with the same Exe exists; it returns the resulting file and app id.
+// AppendShortcut adds s to the file, or updates the shortcut with the same Exe and AppName; it returns the resulting file and app id.
 func AppendShortcut(vdf []byte, s Shortcut, startDir string) ([]byte, uint32, error) {
 	root := map[string]any{}
 	if len(vdf) > 0 {
@@ -92,15 +93,22 @@ func AppendShortcut(vdf []byte, s Shortcut, startDir string) ([]byte, uint32, er
 	}
 	want := normalizeExe(s.Exe)
 	id := ShortcutAppID(s.Exe, s.AppName)
+	openVR := int32(0)
+	if s.OpenVR {
+		openVR = 1
+	}
 	next := 0
 	for k, v := range list {
 		if e, ok := v.(map[string]any); ok {
-			if exe, _ := e["Exe"].(string); normalizeExe(exe) == want {
+			exe, _ := e["Exe"].(string)
+			if name, _ := e["AppName"].(string); normalizeExe(exe) == want && name == s.AppName {
+				e["LaunchOptions"], e["OpenVR"] = s.LaunchOptions, openVR
+				// Stamping an entry without an id keeps one shortcut and gives the grid art a known id.
 				if have, ok := e["appid"].(int32); ok {
-					return vdf, uint32(have), nil
+					id = uint32(have)
+				} else {
+					e["appid"] = int32(id)
 				}
-				// Stamping the matching entry keeps one shortcut and gives the grid art a known id.
-				e["appid"] = int32(id)
 				out, err := EncodeBinaryVDF(root)
 				return out, id, err
 			}
@@ -114,8 +122,8 @@ func AppendShortcut(vdf []byte, s Shortcut, startDir string) ([]byte, uint32, er
 	}
 	list[strconv.Itoa(next)] = map[string]any{
 		"appid": int32(id), "AppName": s.AppName, "Exe": `"` + s.Exe + `"`, "StartDir": `"` + startDir + `"`,
-		"icon": "", "ShortcutPath": "", "LaunchOptions": "", "IsHidden": int32(0), "AllowDesktopConfig": int32(1),
-		"AllowOverlay": int32(1), "OpenVR": int32(0), "Devkit": int32(0), "DevkitGameID": "", "DevkitOverrideAppID": int32(0),
+		"icon": "", "ShortcutPath": "", "LaunchOptions": s.LaunchOptions, "IsHidden": int32(0), "AllowDesktopConfig": int32(1),
+		"AllowOverlay": int32(1), "OpenVR": openVR, "Devkit": int32(0), "DevkitGameID": "", "DevkitOverrideAppID": int32(0),
 		"LastPlayTime": int32(0), "FlatpakAppID": "", "sortas": "", "tags": map[string]any{},
 	}
 	out, err := EncodeBinaryVDF(root)
@@ -124,6 +132,11 @@ func AppendShortcut(vdf []byte, s Shortcut, startDir string) ([]byte, uint32, er
 
 // RemoveShortcut deletes every shortcut whose Exe is exe; the other entries keep their indexes, and with none found it returns vdf unchanged.
 func RemoveShortcut(vdf []byte, exe string) ([]byte, bool, error) {
+	return RemoveShortcutsExcept(vdf, exe, nil)
+}
+
+// RemoveShortcutsExcept is RemoveShortcut sparing the first entry of each AppName in keep, so its user settings survive and no duplicate keeps old launch settings.
+func RemoveShortcutsExcept(vdf []byte, exe string, keep []string) ([]byte, bool, error) {
 	if len(vdf) == 0 {
 		return vdf, false, nil
 	}
@@ -138,15 +151,26 @@ func RemoveShortcut(vdf []byte, exe string) ([]byte, bool, error) {
 		if !ok || !strings.EqualFold(k, "shortcuts") {
 			continue
 		}
-		for idx, e := range list {
-			entry, ok := e.(map[string]any)
+		idxs := make([]string, 0, len(list))
+		for idx := range list {
+			idxs = append(idxs, idx)
+		}
+		sort.Slice(idxs, func(i, j int) bool { return vdfKeyLess(idxs[i], idxs[j]) })
+		var kept []string
+		for _, idx := range idxs {
+			entry, ok := list[idx].(map[string]any)
 			if !ok {
 				continue
 			}
-			if have, _ := entry["Exe"].(string); normalizeExe(have) == want {
-				delete(list, idx)
-				removed = true
+			if have, _ := entry["Exe"].(string); normalizeExe(have) != want {
+				continue
 			}
+			if name, _ := entry["AppName"].(string); slices.Contains(keep, name) && !slices.Contains(kept, name) {
+				kept = append(kept, name)
+				continue
+			}
+			delete(list, idx)
+			removed = true
 		}
 	}
 	if !removed {

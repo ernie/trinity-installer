@@ -5,14 +5,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ernie/trinity-installer/internal/release"
+	"github.com/ernie/trinity-installer/internal/steam"
 )
 
 // fakeRegistry records HKEY_CURRENT_USER writes instead of touching the real registry.
@@ -176,7 +179,7 @@ func TestUninstallEntryWritten(t *testing.T) {
 		CreatedInstallDir: true,
 		Dirs:              []string{"baseq3", "missionpack"},
 		Files:             []string{"baseq3/pak0.pk3", "trinity-install.json", "trinity.exe", "uninstall.exe"},
-		StartMenu:         filepath.Join(roaming, "Microsoft", "Windows", "Start Menu", "Programs", "Trinity.lnk"),
+		StartMenuLinks:    []string{filepath.Join(roaming, "Microsoft", "Windows", "Start Menu", "Programs", "Trinity.lnk")},
 	}
 	if !reflect.DeepEqual(got, wantRec) {
 		t.Fatalf("%+v\nwant %+v", got, wantRec)
@@ -215,9 +218,8 @@ func TestReinstallMergesThePreviousRecord(t *testing.T) {
 	os.MkdirAll(filepath.Join(steamRoot, "config"), 0o755)
 	user := filepath.Join(steamRoot, "userdata", "10005062")
 	ctx, log := context.Background(), func(string) {}
-	first := New(Options{GOOS: "windows", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot, SteamUser: user, SteamVRRoot: t.TempDir()})
+	first := New(Options{GOOS: "windows", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot, SteamUser: user, SteamVRRoot: t.TempDir(), PreferVR: true, AlsoOther: true})
 	first.steamRunning = func() (bool, error) { return false, nil }
-	first.steamVRRunning = func() (bool, error) { return false, nil }
 	first.PrepareDestination(ctx, log)
 	first.PushPackage(ctx, pkgOf(t, "v1", map[string]int{"trinity.exe": 1}), log)
 	os.WriteFile(filepath.Join(install, "baseq3", "pak0.pk3"), []byte("p"), 0o644)
@@ -225,8 +227,10 @@ func TestReinstallMergesThePreviousRecord(t *testing.T) {
 	if err := first.RegisterLaunchEntry(ctx, log); err != nil {
 		t.Fatal(err)
 	}
-	if err := first.RegisterVR(ctx, first.appID, map[string][]byte{"capsule": {1}}, log); err != nil {
-		t.Fatal(err)
+	exe := filepath.Join(install, "trinity.exe")
+	ids := []uint32{steam.ShortcutAppID(exe, "Trinity"), steam.ShortcutAppID(exe, "Trinity (Flat)")}
+	if rec := readRecord(t, install); !reflect.DeepEqual(rec.AppIDs, ids) {
+		t.Fatalf("every Steam shortcut's id is recorded: %+v", rec)
 	}
 	// The second install skips Steam and finds the pak already there, so the runner reports nothing for it.
 	second := New(Options{GOOS: "windows", InstallDir: install, PaksDir: install})
@@ -236,11 +240,34 @@ func TestReinstallMergesThePreviousRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := readRecord(t, install)
-	if rec.SteamRoot != steamRoot || rec.SteamUser != user || rec.AppID != first.appID || rec.AppID == 0 {
-		t.Fatalf("the earlier Steam shortcut was forgotten: %+v", rec)
+	if rec.SteamRoot != steamRoot || rec.SteamUser != user || !reflect.DeepEqual(rec.AppIDs, ids) {
+		t.Fatalf("the earlier Steam shortcuts were forgotten: %+v", rec)
 	}
-	if !rec.CreatedInstallDir || !reflect.DeepEqual(rec.Files, []string{"baseq3/pak0.pk3", "trinity-capsule.png", "trinity-install.json", "trinity.exe", "trinity.vrmanifest", "uninstall.exe"}) {
+	if !rec.CreatedInstallDir || !reflect.DeepEqual(rec.Files, []string{"baseq3/pak0.pk3", "trinity-install.json", "trinity.exe", "uninstall.exe"}) {
 		t.Fatalf("%+v", rec)
+	}
+}
+
+func TestReinstallKeepsTheRecordedSteamShortcutsWhileSteamWillNotClose(t *testing.T) {
+	stubCommands(t)
+	fakeSelf(t, "installer")
+	t.Setenv("APPDATA", t.TempDir())
+	install := filepath.Join(t.TempDir(), "Trinity")
+	steamRoot := t.TempDir()
+	user := filepath.Join(steamRoot, "userdata", "10005062")
+	os.MkdirAll(install, 0o755)
+	writeRecord(t, install, installRecord{InstallDir: install, PaksDir: install, SteamRoot: steamRoot, SteamUser: user, AppIDs: []uint32{7, 8}})
+	tg := New(Options{GOOS: "windows", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot, SteamUser: user})
+	tg.steamRunning = func() (bool, error) { return true, nil }
+	tg.wait = func(time.Duration) <-chan time.Time { c := make(chan time.Time, 1); c <- time.Time{}; return c }
+	ctx, log := context.Background(), func(string) {}
+	tg.PrepareDestination(ctx, log)
+	tg.PushPackage(ctx, pkgOf(t, "v2", map[string]int{"trinity.exe": 1}), log)
+	if err := tg.RegisterLaunchEntry(ctx, log); !errors.Is(err, ErrSteamRunning) {
+		t.Fatalf("%v", err)
+	}
+	if rec := readRecord(t, install); !reflect.DeepEqual(rec.AppIDs, []uint32{7, 8}) || rec.SteamUser != user {
+		t.Fatalf("the shortcuts still in Steam must stay recorded: %+v", rec)
 	}
 }
 

@@ -15,6 +15,8 @@ type Options struct {
 	AddToSteam  bool
 	StartMenu   bool // the Start Menu on Windows, the applications menu on Linux
 	Desktop     bool
+	PreferVR    bool   // the plain "Trinity" shortcuts start in VR; otherwise flatscreen
+	AlsoOther   bool   // every launch place also gets a shortcut for the other mode
 	SteamRoot   string // "" when Steam is absent
 	SteamUser   string // the chosen user's userdata folder; "" when none could be chosen
 	SteamVRRoot string // "" when SteamVR is absent
@@ -24,7 +26,7 @@ type Options struct {
 }
 
 func Defaults(goos, goarch, home, systemDrive string) Options {
-	o := Options{GOOS: goos, GOARCH: goarch, StartMenu: goos != "darwin", Desktop: goos != "darwin"}
+	o := Options{GOOS: goos, GOARCH: goarch, StartMenu: goos != "darwin", Desktop: goos != "darwin", AlsoOther: true}
 	if goos == "darwin" {
 		o.InstallDir = joinFor(goos, home, "Applications")
 		o.PaksDir = joinFor(goos, home, "Library", "Application Support", "Trinity")
@@ -42,6 +44,7 @@ func Defaults(goos, goarch, home, systemDrive string) Options {
 			o.SteamVRRoot = vr
 		}
 	}
+	o.PreferVR = o.SteamVRRoot != ""
 	return o
 }
 

@@ -16,10 +16,11 @@ import (
 	"github.com/ernie/trinity-installer/internal/target/local"
 )
 
-// installedDir and uninstallRun are variables so tests neither read the registry nor delete anything.
+// installedDir, uninstallRun and steamRestarts are variables so tests neither read the registry, delete anything nor look for Steam.
 var (
-	installedDir = local.InstalledDir
-	uninstallRun = local.Uninstall
+	installedDir  = local.InstalledDir
+	uninstallRun  = local.Uninstall
+	steamRestarts = local.UninstallRestartsSteam
 )
 
 // uninstallMode reads Settings > Apps' command line (--uninstall first, --quiet anywhere after it); a double-clicked
@@ -66,7 +67,27 @@ func (u *ui) showUninstall() {
 	status.Hide()
 	remove := widget.NewButton("Remove", nil)
 	cancel := widget.NewButton("Cancel", func() { u.app.Quit() })
+	restart := wrapped("Steam will restart to remove the shortcut.")
+	restart.Hide()
+	// checks counts the Steam checks and removals started; an answer counts only if nothing started after it.
+	checks := 0
+	restarts := steamRestarts
+	checkSteam := func() {
+		checks++
+		n := checks
+		// The check runs tasklist, which can take seconds, so the window does not wait for it.
+		background(func() {
+			on := restarts(dir)
+			fyne.Do(func() {
+				if n == checks && on {
+					restart.Show()
+				}
+			})
+		})
+	}
 	remove.OnTapped = func() {
+		checks++
+		restart.Hide()
 		remove.Disable()
 		settings.Disable()
 		cancel.Hide()
@@ -83,6 +104,7 @@ func (u *ui) showUninstall() {
 					remove.Enable()
 					settings.Enable()
 					cancel.Show()
+					checkSteam()
 					return
 				}
 				u.showUninstalled(errs)
@@ -90,8 +112,9 @@ func (u *ui) showUninstall() {
 		})
 	}
 	u.uninstallRemove, u.uninstallCancel, u.uninstallSettings, u.uninstallStatus = remove, cancel, settings, status
-	body := container.NewVBox(wrapped("Remove Trinity from this PC?"), folder, settings, status)
+	body := container.NewVBox(wrapped("Remove Trinity from this PC?"), folder, settings, restart, status)
 	u.show(container.NewBorder(nil, buttonRow(cancel, remove), nil, nil, body))
+	checkSteam()
 }
 
 func (u *ui) showUninstalled(errs []error) {

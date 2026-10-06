@@ -911,13 +911,13 @@ func TestPCScreenEntryBoxes(t *testing.T) {
 	steamRoot := t.TempDir()
 	os.MkdirAll(filepath.Join(steamRoot, "userdata", "10005062"), 0o755)
 	for goos, want := range map[string]string{
-		"windows": "Add to Start Menu,Add to Desktop,Add to Steam",
-		"linux":   "Add to applications menu,Add to Desktop,Add to Steam",
+		"windows": "Also create VR shortcuts,Add to Start Menu,Add to Desktop,Add to Steam",
+		"linux":   "Also create VR shortcuts,Add to applications menu,Add to Desktop,Add to Steam",
 	} {
 		ui.goos = goos
 		dir := filepath.Join(t.TempDir(), "Trinity")
 		ui.pc = local.Defaults(goos, "amd64", t.TempDir(), t.TempDir())
-		ui.pc.InstallDir, ui.pc.PaksDir, ui.pc.SteamRoot, ui.pc.AddToSteam = dir, dir, steamRoot, true
+		ui.pc.InstallDir, ui.pc.PaksDir, ui.pc.SteamRoot, ui.pc.AddToSteam, ui.pc.PreferVR = dir, dir, steamRoot, true, false
 		ui.showPC()
 		if got := strings.Join(order(), ","); got != want {
 			t.Fatalf("%s: %s", goos, got)
@@ -962,6 +962,8 @@ func TestPCScreenPrefillsTheExistingInstall(t *testing.T) {
 	// The note needs the folder's install record, not just the Apps entry.
 	os.MkdirAll(existing, 0o755)
 	os.WriteFile(filepath.Join(existing, "trinity-install.json"), []byte("{}"), 0o644)
+	// A fresh test registry afterwards, so the entry does not reach later tests or a repeated run.
+	t.Cleanup(local.SetRegistryForTest)
 	if err := local.SetInstalledDirForTest(existing); err != nil {
 		t.Fatal(err)
 	}
@@ -1299,5 +1301,108 @@ func TestRelaunchFailureStillFinishes(t *testing.T) {
 	ui.showInstall()
 	if !strings.Contains(labels(ui.content), "Trinity is installed") {
 		t.Fatalf("%q", labels(ui.content))
+	}
+}
+
+func TestPCScreenPlayMode(t *testing.T) {
+	cfg := t.TempDir()
+	open := func(o local.Options) *ui {
+		a := test.NewApp()
+		t.Cleanup(a.Quit)
+		u := newUI(a, a.NewWindow("t"), cfg)
+		t.Cleanup(func() { u.logFile.Close() })
+		u.goos = o.GOOS
+		if u.goos == "" {
+			u.goos = "windows"
+		}
+		u.pc = o
+		u.showPC()
+		return u
+	}
+	visibleOrder := func(u *ui) []string {
+		var got []string
+		for _, w := range allWidgets(u.content) {
+			switch w := w.(type) {
+			case *widget.Label:
+				if w.Visible() && w.Text == "How do you want to play?" {
+					got = append(got, w.Text)
+				}
+			case *widget.RadioGroup:
+				if w.Visible() {
+					got = append(got, strings.Join(w.Options, "/"))
+				}
+			case *widget.Check:
+				if w.Visible() {
+					got = append(got, w.Text)
+				}
+			}
+		}
+		return got
+	}
+	dir := filepath.Join(t.TempDir(), "Trinity")
+	u := open(local.Options{GOOS: "windows", InstallDir: dir, PaksDir: dir, StartMenu: true, Desktop: true, PreferVR: true, AlsoOther: true})
+	if got := strings.Join(visibleOrder(u), ","); got != "How do you want to play?,VR/Flatscreen,Also create Flatscreen shortcuts,Add to Start Menu,Add to Desktop" {
+		t.Fatal(got)
+	}
+	if u.pcPlay.Selected != "VR" || !u.pcAlso.Checked {
+		t.Fatalf("%q %v", u.pcPlay.Selected, u.pcAlso.Checked)
+	}
+	u.pcPlay.SetSelected("Flatscreen")
+	if u.pcAlso.Text != "Also create VR shortcuts" {
+		t.Fatalf("the box must follow the radio: %q", u.pcAlso.Text)
+	}
+	u.pcAlso.SetChecked(false)
+	u.pcNext.OnTapped()
+	if u.pc.PreferVR || u.pc.AlsoOther {
+		t.Fatalf("%+v", u.pc)
+	}
+	// A later run starts from the remembered choice rather than the SteamVR default.
+	again := open(local.Options{})
+	if again.pcPlay.Selected != "Flatscreen" || again.pcAlso.Checked || again.pcAlso.Text != "Also create VR shortcuts" {
+		t.Fatalf("%q %v %q", again.pcPlay.Selected, again.pcAlso.Checked, again.pcAlso.Text)
+	}
+	again.pcPlay.SetSelected("VR")
+	again.pcAlso.SetChecked(true)
+	again.pcNext.OnTapped()
+	if third := open(local.Options{}); third.pcPlay.Selected != "VR" || !third.pcAlso.Checked {
+		t.Fatalf("%q %v", third.pcPlay.Selected, third.pcAlso.Checked)
+	}
+	// The Mac never shows the play choices, so it must not remember any.
+	macCfg := t.TempDir()
+	a := test.NewApp()
+	t.Cleanup(a.Quit)
+	mac := newUI(a, a.NewWindow("t"), macCfg)
+	t.Cleanup(func() { mac.logFile.Close() })
+	mac.goos = "darwin"
+	mac.pc = local.Options{GOOS: "darwin", InstallDir: "/Users/x/Applications", PaksDir: "/Users/x/Library/Application Support/Trinity"}
+	mac.showPC()
+	if got := visibleOrder(mac); len(got) != 0 {
+		t.Fatalf("the Mac shows %v", got)
+	}
+	mac.pcNext.OnTapped()
+	if b, _ := os.ReadFile(filepath.Join(macCfg, "settings.json")); !strings.Contains(string(b), "installDir") || strings.Contains(string(b), "preferVR") || strings.Contains(string(b), "alsoOther") {
+		t.Fatalf("%s", b)
+	}
+}
+
+func TestPCScreenPlayModeDefaultsWithoutSettings(t *testing.T) {
+	cfg := t.TempDir()
+	remembered := filepath.Join(t.TempDir(), "Trinity")
+	// A settings file from before the play choices existed, or from a run that never confirmed them.
+	os.WriteFile(filepath.Join(cfg, "settings.json"), []byte(`{"installDir":`+strconv.Quote(remembered)+`}`), 0o644)
+	old := installedDir
+	installedDir = func() (string, error) { return "", errors.New("Trinity's uninstall entry was not found") }
+	t.Cleanup(func() { installedDir = old })
+	a := test.NewApp()
+	t.Cleanup(a.Quit)
+	u := newUI(a, a.NewWindow("t"), cfg)
+	t.Cleanup(func() { u.logFile.Close() })
+	u.goos = "windows"
+	u.showPC()
+	home, _ := os.UserHomeDir()
+	def := local.Defaults("windows", runtime.GOARCH, home, os.Getenv("SystemDrive"))
+	want := map[bool]string{true: "VR", false: "Flatscreen"}[def.PreferVR]
+	if u.pcFolder.Text != remembered || u.pcPlay.Selected != want || u.pcPlay.Selected == "" || !u.pcAlso.Checked {
+		t.Fatalf("folder %q, play %q (SteamVR %q gives %q), also %v", u.pcFolder.Text, u.pcPlay.Selected, def.SteamVRRoot, want, u.pcAlso.Checked)
 	}
 }

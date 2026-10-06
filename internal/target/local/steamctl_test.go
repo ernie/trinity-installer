@@ -216,7 +216,7 @@ func TestAppsEntrySurvivesASteamThatWillNotClose(t *testing.T) {
 	install := filepath.Join(t.TempDir(), "Trinity Test")
 	steamRoot := t.TempDir()
 	reg := newFakeRegistry()
-	tg := New(Options{GOOS: "windows", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot, SteamUser: filepath.Join(steamRoot, "userdata", "1"), StartMenu: true, Desktop: true})
+	tg := New(Options{GOOS: "windows", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot, SteamUser: filepath.Join(steamRoot, "userdata", "1"), StartMenu: true, Desktop: true, AlsoOther: true})
 	tg.registry = reg
 	tg.steamRunning = func() (bool, error) { return true, nil }
 	tg.wait = func(time.Duration) <-chan time.Time { c := make(chan time.Time, 1); c <- time.Time{}; return c }
@@ -231,7 +231,7 @@ func TestAppsEntrySurvivesASteamThatWillNotClose(t *testing.T) {
 	if reg.keys[uninstallKey]["InstallLocation"] != install {
 		t.Fatalf("no Settings > Apps entry after the Steam step failed: %+v", reg.keys)
 	}
-	if rec := readRecord(t, install); rec.StartMenu == "" || rec.Desktop == "" {
+	if rec := readRecord(t, install); len(rec.StartMenuLinks) != 2 || len(rec.DesktopLinks) != 2 {
 		t.Fatalf("the shortcuts written before the Steam step are not recorded: %+v", rec)
 	}
 }

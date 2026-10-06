@@ -99,26 +99,15 @@ func TestSteamVRRootAndVrcmd(t *testing.T) {
 	if !ok || got != vr {
 		t.Fatalf("%q %v", got, ok)
 	}
-	name, args, err := VrcmdArgs(vr, "windows", `C:\x\trinity.vrmanifest`)
-	if err != nil || name != filepath.Join(vr, "bin", "win64", "vrcmd.exe") || args[0] != "--appmanifest" {
-		t.Fatalf("%q %v %v", name, args, err)
-	}
-	name, args, _ = VrcmdArgs(vr, "linux", "/x/trinity.vrmanifest")
-	if name != filepath.Join(vr, "bin", "vrenv.sh") || strings.Join(args, "|") != filepath.Join(vr, "bin", "linux64", "vrcmd")+"|--appmanifest|/x/trinity.vrmanifest" {
-		t.Fatalf("%q %v", name, args)
-	}
-	if _, _, err := VrcmdArgs(vr, "darwin", "/x"); err == nil {
-		t.Fatal("macOS vrcmd accepted")
-	}
 }
 
 func TestManifestBinaryKey(t *testing.T) {
-	b := Manifest(`C:\T`, "trinity.exe", 7, "binary_path_windows", "")
+	b := Manifest(`C:\T`, "trinity.exe", 7, "binary_path_windows", "", "")
 	if !strings.Contains(string(b), `"binary_path_windows": "C:\\T\\trinity.exe"`) || !strings.Contains(string(b), `"steam.app.7"`) {
 		t.Fatalf("%s", b)
 	}
-	// The PC zips ship no vrpreferences.json, so the PC manifest must not name one.
-	if strings.Contains(string(b), "preference_settings_path") {
+	// The PC zips ship no vrpreferences.json, so the PC manifest must not name one; no arguments means no key.
+	if strings.Contains(string(b), "preference_settings_path") || strings.Contains(string(b), "arguments") {
 		t.Fatalf("%s", b)
 	}
 }

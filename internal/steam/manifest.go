@@ -22,8 +22,8 @@ func GameID64(appID uint32) uint64 {
 	return uint64(appID)<<32 | 0x02000000
 }
 
-// Manifest joins with the separator dir already uses, so a Windows dir stays backslashed and the Frame's stays slashed; an empty prefs names no preferences file.
-func Manifest(dir, exe string, appID uint32, binaryKey, prefs string) []byte {
+// Manifest joins with the separator dir already uses, so a Windows dir stays backslashed and the Frame's stays slashed; an empty prefs names no preferences file and empty args no arguments.
+func Manifest(dir, exe string, appID uint32, binaryKey, prefs, args string) []byte {
 	sep := "/"
 	if strings.Contains(dir, `\`) {
 		sep = `\`
@@ -40,6 +40,9 @@ func Manifest(dir, exe string, appID uint32, binaryKey, prefs string) []byte {
 	}
 	if prefs != "" {
 		app["preference_settings_path"] = join(prefs)
+	}
+	if args != "" {
+		app["arguments"] = args
 	}
 	b, _ := json.MarshalIndent(map[string]any{"source": "builtin", "applications": []any{app}}, "", "\t")
 	return append(b, '\n')

@@ -204,13 +204,3 @@ func SteamVRRoot(roots []string) (string, bool) {
 	}
 	return "", false
 }
-
-func VrcmdArgs(steamVRRoot, goos, manifest string) (string, []string, error) {
-	switch goos {
-	case "windows":
-		return filepath.Join(steamVRRoot, "bin", "win64", "vrcmd.exe"), []string{"--appmanifest", manifest}, nil
-	case "linux":
-		return filepath.Join(steamVRRoot, "bin", "vrenv.sh"), []string{filepath.Join(steamVRRoot, "bin", "linux64", "vrcmd"), "--appmanifest", manifest}, nil
-	}
-	return "", nil, fmt.Errorf("SteamVR registration is not available on %s", goos)
-}

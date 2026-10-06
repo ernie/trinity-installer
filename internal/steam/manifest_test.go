@@ -25,11 +25,12 @@ func TestGameID64(t *testing.T) {
 }
 
 func TestManifest(t *testing.T) {
-	b := Manifest("/home/steamos/devkit-game/Trinity", "trinity", 2634369398, "binary_path_linux_arm", "vrpreferences.json")
+	b := Manifest("/home/steamos/devkit-game/Trinity", "trinity", 2634369398, "binary_path_linux_arm", "vrpreferences.json", "+set vr_enabled 1")
 	var m struct {
 		Source string `json:"source"`
 		Apps   []struct {
 			Key    string                       `json:"app_key"`
+			Args   string                       `json:"arguments"`
 			Launch string                       `json:"launch_type"`
 			Bin    string                       `json:"binary_path_linux_arm"`
 			Dir    string                       `json:"working_directory"`
@@ -43,7 +44,7 @@ func TestManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := m.Apps[0]
-	if m.Source != "builtin" || a.Key != "steam.app.2634369398" || a.Launch != "binary" || a.Bin != "/home/steamos/devkit-game/Trinity/trinity" || a.Dir != "/home/steamos/devkit-game/Trinity" || a.OpenXR != 1 || a.Prefs != "/home/steamos/devkit-game/Trinity/vrpreferences.json" || a.Image != "/home/steamos/devkit-game/Trinity/trinity-capsule.png" || a.Str["en_us"]["name"] != "Trinity" {
+	if m.Source != "builtin" || a.Key != "steam.app.2634369398" || a.Launch != "binary" || a.Bin != "/home/steamos/devkit-game/Trinity/trinity" || a.Dir != "/home/steamos/devkit-game/Trinity" || a.OpenXR != 1 || a.Prefs != "/home/steamos/devkit-game/Trinity/vrpreferences.json" || a.Image != "/home/steamos/devkit-game/Trinity/trinity-capsule.png" || a.Str["en_us"]["name"] != "Trinity" || a.Args != "+set vr_enabled 1" {
 		t.Fatalf("%+v", a)
 	}
 }
@@ -53,6 +54,7 @@ const frameManifest = `{
 	"applications": [
 		{
 			"app_key": "steam.app.2634369398",
+			"arguments": "+set vr_enabled 1 +set vr_mirrorEnabled 0",
 			"binary_path_linux_arm": "/home/steamos/devkit-game/Trinity/trinity",
 			"image_path": "/home/steamos/devkit-game/Trinity/trinity-capsule.png",
 			"is_openxr": 1,
@@ -71,7 +73,7 @@ const frameManifest = `{
 `
 
 func TestManifestFrameBytes(t *testing.T) {
-	if got := string(Manifest("/home/steamos/devkit-game/Trinity", "trinity", 2634369398, "binary_path_linux_arm", "vrpreferences.json")); got != frameManifest {
+	if got := string(Manifest("/home/steamos/devkit-game/Trinity", "trinity", 2634369398, "binary_path_linux_arm", "vrpreferences.json", "+set vr_enabled 1 +set vr_mirrorEnabled 0")); got != frameManifest {
 		t.Fatalf("%s", got)
 	}
 }

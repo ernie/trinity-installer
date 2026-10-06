@@ -19,16 +19,23 @@ func (u *ui) showPC() {
 	if u.pc.InstallDir == "" {
 		home, _ := os.UserHomeDir()
 		u.pc = local.Defaults(u.goos, runtime.GOARCH, home, os.Getenv("SystemDrive"))
+		saved := loadSettings(u.cfgDir)
 		// The Apps entry wins, then the folder last confirmed here, so an update lands where the user put Trinity before.
 		dir, err := installedDir()
 		if err != nil || dir == "" {
-			dir = loadSettings(u.cfgDir).InstallDir
+			dir = saved.InstallDir
 		}
 		if dir != "" {
 			u.pc.InstallDir = dir
 			if u.goos != "darwin" {
 				u.pc.PaksDir = dir
 			}
+		}
+		if saved.PreferVR != nil {
+			u.pc.PreferVR = *saved.PreferVR
+		}
+		if saved.AlsoOther != nil {
+			u.pc.AlsoOther = *saved.AlsoOther
 		}
 	}
 	what := "Install folder"
@@ -61,6 +68,23 @@ func (u *ui) showPC() {
 	choose := widget.NewButton("Choose...", func() {
 		u.pickFolder(u.pcFolder.Text, func(dir string) { u.pcFolder.SetText(dir) })
 	})
+	playLabel := widget.NewLabel("How do you want to play?")
+	u.pcAlso = widget.NewCheck("", nil)
+	u.pcAlso.SetChecked(u.pc.AlsoOther)
+	u.pcPlay = widget.NewRadioGroup([]string{playVR, playFlat}, func(mode string) {
+		if mode == playVR {
+			u.pcAlso.SetText("Also create Flatscreen shortcuts")
+		} else {
+			u.pcAlso.SetText("Also create VR shortcuts")
+		}
+	})
+	u.pcPlay.Horizontal = true
+	u.pcPlay.Required = true
+	if u.pc.PreferVR {
+		u.pcPlay.SetSelected(playVR)
+	} else {
+		u.pcPlay.SetSelected(playFlat)
+	}
 	menu := "Add to Start Menu"
 	if u.goos == "linux" {
 		menu = "Add to applications menu"
@@ -70,6 +94,9 @@ func (u *ui) showPC() {
 	u.pcDesktop = widget.NewCheck("Add to Desktop", nil)
 	u.pcDesktop.SetChecked(u.pc.Desktop)
 	if u.goos == "darwin" {
+		playLabel.Hide()
+		u.pcPlay.Hide()
+		u.pcAlso.Hide()
 		u.pcStartMenu.Hide()
 		u.pcDesktop.Hide()
 	}
@@ -108,14 +135,25 @@ func (u *ui) showPC() {
 		u.pc.AddToSteam = u.pcSteam.Checked
 		u.pc.StartMenu = u.pcStartMenu.Checked && u.goos != "darwin"
 		u.pc.Desktop = u.pcDesktop.Checked && u.goos != "darwin"
+		u.pc.PreferVR = u.pcPlay.Selected == playVR
+		u.pc.AlsoOther = u.pcAlso.Checked
 		u.pc.Icon = grid.Icon
-		if err := saveSettings(u.cfgDir, settings{InstallDir: u.pc.InstallDir}); err != nil {
-			u.logf("could not remember the install folder: %v", err)
+		s := settings{InstallDir: u.pc.InstallDir}
+		if u.goos != "darwin" {
+			s.PreferVR, s.AlsoOther = &u.pc.PreferVR, &u.pc.AlsoOther
+		}
+		if err := saveSettings(u.cfgDir, s); err != nil {
+			u.logf("could not remember the install choices: %v", err)
 		}
 		u.target = local.New(u.pc)
 		u.showQuake3()
 	}
 	back := widget.NewButton("Back", func() { u.showTarget() })
-	body := container.NewVBox(note, intro, container.NewBorder(nil, nil, nil, choose, u.pcFolder), u.pcStartMenu, u.pcDesktop, u.pcSteam, u.pcSteamRestart, u.pcSteamNote)
+	body := container.NewVBox(note, intro, container.NewBorder(nil, nil, nil, choose, u.pcFolder), playLabel, u.pcPlay, u.pcAlso, u.pcStartMenu, u.pcDesktop, u.pcSteam, u.pcSteamRestart, u.pcSteamNote)
 	u.show(container.NewBorder(nil, buttonRow(back, u.pcNext), nil, nil, body))
 }
+
+const (
+	playVR   = "VR"
+	playFlat = "Flatscreen"
+)

@@ -29,14 +29,15 @@ func (q *quitApp) Quit() { q.quits++ }
 
 func stubUninstall(t *testing.T, dir string, run func(local.UninstallOptions) []error) *[]local.UninstallOptions {
 	var calls []local.UninstallOptions
-	oldDir, oldRun := installedDir, uninstallRun
+	oldDir, oldRun, oldRestarts := installedDir, uninstallRun, steamRestarts
+	steamRestarts = func(string) bool { return false }
 	installedDir = func() (string, error) { return dir, nil }
 	uninstallRun = func(_ context.Context, o local.UninstallOptions, log func(string)) []error {
 		calls = append(calls, o)
 		log("removing " + o.InstallDir)
 		return run(o)
 	}
-	t.Cleanup(func() { installedDir, uninstallRun = oldDir, oldRun })
+	t.Cleanup(func() { installedDir, uninstallRun, steamRestarts = oldDir, oldRun, oldRestarts })
 	return &calls
 }
 
@@ -233,5 +234,76 @@ func TestUninstallModeFromTheExeName(t *testing.T) {
 	}
 	if u, _ := uninstallMode(`C:\\T\\trinity-installer.exe`, nil); u {
 		t.Fatal("the installer's own name must not uninstall")
+	}
+}
+
+func TestUninstallScreenSaysWhenSteamRestarts(t *testing.T) {
+	for _, restarts := range []bool{true, false} {
+		a := test.NewApp()
+		ui := newUI(a, a.NewWindow("t"), t.TempDir())
+		t.Cleanup(func() { ui.logFile.Close(); a.Quit() })
+		stubUninstall(t, `C:\T`, func(local.UninstallOptions) []error { return nil })
+		// The check runs tasklist, so it is held here to prove the window does not wait for it.
+		var pending []func()
+		oldBackground := background
+		background = func(f func()) { pending = append(pending, f) }
+		t.Cleanup(func() { background = oldBackground })
+		old := steamRestarts
+		var asked string
+		steamRestarts = func(dir string) bool { asked = dir; return restarts }
+		t.Cleanup(func() { steamRestarts = old })
+		ui.start(true)
+		notice := func() bool { return strings.Contains(labels(ui.content), "Steam will restart to remove the shortcut.") }
+		if ui.uninstallRemove == nil || notice() || asked != "" || len(pending) != 1 {
+			t.Fatalf("the window must show before the Steam check answers: notice %v, asked %q, pending %d", notice(), asked, len(pending))
+		}
+		pending[0]()
+		if notice() != restarts || asked != `C:\T` {
+			t.Fatalf("restarts %v: shown %v, asked about %q", restarts, notice(), asked)
+		}
+	}
+}
+
+func TestUninstallNoticeFollowsRemoveAndRetry(t *testing.T) {
+	a := test.NewApp()
+	ui := newUI(a, a.NewWindow("t"), t.TempDir())
+	t.Cleanup(func() { ui.logFile.Close(); a.Quit() })
+	refuse := true
+	stubUninstall(t, `C:\T`, func(local.UninstallOptions) []error {
+		if refuse {
+			return []error{fmt.Errorf("Steam is running and did not close: Steam did not close. %w", local.ErrSteamRunning)}
+		}
+		return nil
+	})
+	var pending []func()
+	oldBackground := background
+	background = func(f func()) { pending = append(pending, f) }
+	t.Cleanup(func() { background = oldBackground })
+	old := steamRestarts
+	asks := 0
+	steamRestarts = func(string) bool { asks++; return true }
+	t.Cleanup(func() { steamRestarts = old })
+	notice := func() bool { return strings.Contains(labels(ui.content), "Steam will restart to remove the shortcut.") }
+	run := func(i int) { pending[i]() }
+
+	ui.start(true)
+	ui.uninstallRemove.OnTapped()
+	// The first check answers only after Remove was pressed, so it must not show under "Removing Trinity...".
+	run(0)
+	if notice() {
+		t.Fatal("a late answer revealed the notice during the removal")
+	}
+	run(1)
+	if ui.uninstallRemove.Text != "Retry" || len(pending) != 3 {
+		t.Fatalf("a refusal must offer Retry and check Steam again: %q, %d jobs", ui.uninstallRemove.Text, len(pending))
+	}
+	run(2)
+	if !notice() || asks != 2 {
+		t.Fatalf("after the refusal the notice must reflect a fresh check: shown %v, asked %d times", notice(), asks)
+	}
+	refuse = false
+	ui.uninstallRemove.OnTapped()
+	if notice() {
+		t.Fatal("the notice stays up during the removal")
 	}
 }

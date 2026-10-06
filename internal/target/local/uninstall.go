@@ -26,9 +26,9 @@ type installRecord struct {
 	Files             []string `json:"files"` // files the installer wrote, relative to InstallDir
 	SteamRoot         string   `json:"steamRoot"`
 	SteamUser         string   `json:"steamUser"`
-	AppID             uint32   `json:"appID"`
-	StartMenu         string   `json:"startMenu"`
-	Desktop           string   `json:"desktop"`
+	AppIDs            []uint32 `json:"appIDs"` // every Steam shortcut, each with its grid art
+	StartMenuLinks    []string `json:"startMenuLinks"`
+	DesktopLinks      []string `json:"desktopLinks"`
 }
 
 // HasInstallRecord reports whether dir holds a Trinity install made by this installer.
@@ -157,11 +157,11 @@ func (t *Target) registerUninstall(ctx context.Context, log func(string)) error 
 		log("no uninstall.exe, so no Settings > Apps entry")
 		return nil
 	}
-	t.rec.StartMenu = keptShortcut(t.startMenuLnk, t.rec.StartMenu)
-	t.rec.Desktop = keptShortcut(t.desktopLnk, t.rec.Desktop)
-	// Without Steam this time, an earlier install's shortcut is still there to remove.
-	if t.steamShortcut() {
-		t.rec.SteamRoot, t.rec.SteamUser, t.rec.AppID = t.opts.SteamRoot, t.opts.SteamUser, t.appID
+	t.rec.StartMenuLinks = keptShortcuts(t.startMenuLnks, t.rec.StartMenuLinks)
+	t.rec.DesktopLinks = keptShortcuts(t.desktopLnks, t.rec.DesktopLinks)
+	// Until this run writes Steam shortcuts, an earlier install's are still there to remove.
+	if t.steamShortcut() && len(t.appIDs) > 0 {
+		t.rec.SteamRoot, t.rec.SteamUser, t.rec.AppIDs = t.opts.SteamRoot, t.opts.SteamUser, t.appIDs
 	}
 	if err := t.saveRecord(ctx); err != nil {
 		return err
@@ -200,15 +200,18 @@ func (t *Target) writeEntry(log func(string)) error {
 	return nil
 }
 
-// keptShortcut is the shortcut this run wrote, else an earlier install's that is still there; an unticked box writes none.
-func keptShortcut(written, recorded string) string {
-	if written != "" {
-		return written
+// keptShortcuts is what this run wrote, else an earlier install's shortcuts that still exist; an unticked box writes none.
+func keptShortcuts(written, recorded []string) []string {
+	if len(written) > 0 {
+		return append([]string(nil), written...)
 	}
-	if _, err := os.Stat(recorded); recorded != "" && err == nil {
-		return recorded
+	var kept []string
+	for _, p := range recorded {
+		if _, err := os.Stat(p); err == nil {
+			kept = append(kept, p)
+		}
 	}
-	return ""
+	return kept
 }
 
 // EstimatedSizeKB totals the recorded files under dir; files the installer did not write are not Trinity's size.
@@ -246,13 +249,42 @@ type uninstaller struct {
 	steamVRRunning func() (bool, error)
 	self           func() (string, error)
 	detach         func(cmdLine, dir string) error
-	defaultDir     string // the per-user default install folder, which is the installer's whatever the record says
 	closeSteam     func(ctx context.Context, steamRoot string, log func(string)) error
 	relaunchSteam  func(ctx context.Context, steamRoot string, log func(string)) error
 }
 
 // Uninstall removes what the Windows install in opts.InstallDir recorded, logging each step and returning every failure; a running Trinity or Steam refuses it before anything is removed.
 func Uninstall(ctx context.Context, opts UninstallOptions, log func(string)) []error {
+	return newUninstaller().run(ctx, opts, log)
+}
+
+// UninstallRestartsSteam reports whether the windowed uninstall of the install in dir will close Steam and start it again.
+func UninstallRestartsSteam(dir string) bool {
+	return newUninstaller().restartsSteam(dir)
+}
+
+// restartsSteam asks the questions run asks before closing Steam, so the notice and the uninstall cannot disagree.
+func (u *uninstaller) restartsSteam(dir string) bool {
+	var rec installRecord
+	b, err := os.ReadFile(filepath.Join(dir, recordName))
+	if err != nil || json.Unmarshal(b, &rec) != nil || !samePath(rec.InstallDir, dir) || !rec.steamOK() {
+		return false
+	}
+	return u.steamBlocks() != nil
+}
+
+// steamOK says the record names a Steam folder, which is when the uninstall has Steam steps.
+func (r installRecord) steamOK() bool { return r.SteamRoot != "" && isSteamRoot(r.SteamRoot) }
+
+// steamBlocks refuses a running Steam or SteamVR, or one that cannot be checked; the window closes it and starts Steam again.
+func (u *uninstaller) steamBlocks() error {
+	if err := check("Steam", u.steamRunning, ErrSteamRunning); err != nil {
+		return err
+	}
+	return check("SteamVR", u.steamVRRunning, ErrSteamRunning)
+}
+
+func newUninstaller() *uninstaller {
 	u := &uninstaller{
 		registry:       defaultRegistry(),
 		trinityRunning: func() (bool, error) { return processRunning("windows", "trinity") },
@@ -260,7 +292,6 @@ func Uninstall(ctx context.Context, opts UninstallOptions, log func(string)) []e
 		steamVRRunning: func() (bool, error) { return processRunning("windows", "vrserver") },
 		self:           os.Executable,
 		detach:         startDetached,
-		defaultDir:     defaultInstallDir("windows", "", os.Getenv("SystemDrive")),
 	}
 	steamAt := func(root string) *Target {
 		tg := New(Options{GOOS: "windows", SteamRoot: root})
@@ -273,7 +304,7 @@ func Uninstall(ctx context.Context, opts UninstallOptions, log func(string)) []e
 	u.relaunchSteam = func(ctx context.Context, root string, log func(string)) error {
 		return steamAt(root).RelaunchSteam(ctx, log)
 	}
-	return u.run(ctx, opts, log)
+	return u
 }
 
 func (u *uninstaller) run(ctx context.Context, opts UninstallOptions, log func(string)) []error {
@@ -294,11 +325,7 @@ func (u *uninstaller) run(ctx context.Context, opts UninstallOptions, log func(s
 	if recErr == nil && !samePath(rec.InstallDir, dir) {
 		return refuse(fmt.Errorf("the install record in %s is for %s; nothing was removed", dir, rec.InstallDir))
 	}
-	// A record from a re-install over an older installer's folder says the folder already existed.
-	if u.defaultDir != "" && samePath(dir, u.defaultDir) {
-		rec.CreatedInstallDir = true
-	}
-	steamOK := rec.SteamRoot != "" && isSteamRoot(rec.SteamRoot)
+	steamOK := rec.steamOK()
 	closedSteam, err := u.closed(ctx, steamOK, opts.CloseSteam, rec.SteamRoot, log)
 	if err != nil {
 		return refuse(err)
@@ -326,9 +353,9 @@ func (u *uninstaller) run(ctx context.Context, opts UninstallOptions, log func(s
 			if err := removeShortcut(ctx, rec.SteamUser, filepath.Join(dir, "trinity.exe"), log); err != nil {
 				fail("removing the Steam shortcut", err)
 			}
-			if rec.AppID != 0 {
-				for _, name := range steam.GridFiles(rec.AppID) {
-					if err := os.Remove(filepath.Join(rec.SteamUser, "config", "grid", name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			if len(rec.AppIDs) > 0 {
+				for _, id := range rec.AppIDs {
+					if err := removeGridArt(rec.SteamUser, id); err != nil {
 						fail("removing Steam artwork", err)
 					}
 				}
@@ -336,31 +363,34 @@ func (u *uninstaller) run(ctx context.Context, opts UninstallOptions, log func(s
 			}
 		}
 	}
-	if steamOK {
-		if err := removeManifest(ctx, rec.SteamRoot, filepath.Join(dir, "trinity.vrmanifest"), log); err != nil {
-			fail("unlisting the SteamVR manifest", err)
-		}
-	}
-	// Without a record the shortcut's usual place is the best guess; with one, an empty path means the box was unticked.
-	lnk := ""
-	if recErr != nil || rec.StartMenu != "" {
-		lnk = startMenuLink(rec.StartMenu, log)
-	}
-	if lnk != "" {
-		if err := os.Remove(lnk); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			fail("removing "+lnk, err)
+	removeLink := func(p string) {
+		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			fail("removing "+p, err)
 		} else {
-			log("Start Menu shortcut removed")
+			log("removed " + p)
 		}
 	}
-	if rec.Desktop != "" {
-		if !isDesktopLink(ctx, rec.Desktop) {
-			log("ignoring the recorded Desktop path " + rec.Desktop)
-		} else if err := os.Remove(rec.Desktop); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			fail("removing "+rec.Desktop, err)
-		} else {
-			log("Desktop shortcut removed")
+	// Without a record, or with a recorded path that fails the check, the shortcuts' usual place is the best guess; an empty list means the box was unticked.
+	guess := recErr != nil
+	for _, p := range rec.StartMenuLinks {
+		if !isStartMenuLink(p) {
+			log("ignoring the recorded Start Menu path " + p)
+			guess = true
+			continue
 		}
+		removeLink(p)
+	}
+	if roaming, err := roamingDir(os.UserHomeDir); guess && err == nil {
+		for _, name := range linkNames() {
+			removeLink(filepath.Join(roaming, "Microsoft", "Windows", "Start Menu", "Programs", name))
+		}
+	}
+	for _, p := range rec.DesktopLinks {
+		if !isDesktopLink(ctx, p) {
+			log("ignoring the recorded Desktop path " + p)
+			continue
+		}
+		removeLink(p)
 	}
 	if recErr == nil {
 		u.removeInstalled(dir, rec, opts.DeleteSettings, log, fail)
@@ -551,10 +581,7 @@ func (u *uninstaller) closed(ctx context.Context, steamToo, closeSteam bool, ste
 		return false, nil
 	}
 	// Steam rewrites shortcuts.vdf from memory when it exits, so a removal while it runs would come back.
-	steamErr := check("Steam", u.steamRunning, ErrSteamRunning)
-	if steamErr == nil {
-		steamErr = check("SteamVR", u.steamVRRunning, ErrSteamRunning)
-	}
+	steamErr := u.steamBlocks()
 	if steamErr == nil || !closeSteam {
 		return false, steamErr
 	}
@@ -562,15 +589,10 @@ func (u *uninstaller) closed(ctx context.Context, steamToo, closeSteam bool, ste
 	if err := u.closeSteam(ctx, steamRoot, log); err != nil {
 		return false, fmt.Errorf("Steam is running and did not close: %v. %w", err, ErrSteamRunning)
 	}
-	for _, c := range []struct {
-		name    string
-		running func() (bool, error)
-	}{{"Steam", u.steamRunning}, {"SteamVR", u.steamVRRunning}} {
-		if err := check(c.name, c.running, ErrSteamRunning); err != nil {
-			// Steam is down by now, so start it again even though the uninstall stops here.
-			u.relaunchSteam(ctx, steamRoot, log)
-			return false, err
-		}
+	if err := u.steamBlocks(); err != nil {
+		// Steam is down by now, so start it again even though the uninstall stops here.
+		u.relaunchSteam(ctx, steamRoot, log)
+		return false, err
 	}
 	return true, nil
 }
@@ -628,25 +650,27 @@ func removeIfEmpty(p string, log func(string)) {
 	}
 }
 
-// startMenuLink trusts a recorded path only when it is Trinity.lnk in a Start Menu Programs folder.
-func startMenuLink(recorded string, log func(string)) string {
-	if recorded != "" && filepath.IsAbs(recorded) && strings.EqualFold(filepath.Base(recorded), "Trinity.lnk") &&
-		strings.HasSuffix(strings.ToLower(filepath.ToSlash(filepath.Dir(recorded))), "start menu/programs") {
-		return recorded
+// linkNames are the .lnk files of every Trinity shortcut name.
+func linkNames() []string {
+	var names []string
+	for _, n := range shortcutNames {
+		names = append(names, n+".lnk")
 	}
-	if recorded != "" {
-		log("ignoring the recorded Start Menu path " + recorded)
-	}
-	roaming, err := roamingDir(os.UserHomeDir)
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(roaming, "Microsoft", "Windows", "Start Menu", "Programs", "Trinity.lnk")
+	return names
 }
 
-// isDesktopLink trusts a path only when it is Trinity.lnk in a folder named Desktop or in the Desktop the shell resolves now, which a localized Windows names differently.
+func isShortcutName(p string) bool {
+	return containsFold(linkNames(), filepath.Base(p))
+}
+
+// isStartMenuLink trusts a recorded path only when it is a Trinity shortcut in a Start Menu Programs folder.
+func isStartMenuLink(p string) bool {
+	return filepath.IsAbs(p) && isShortcutName(p) && strings.HasSuffix(strings.ToLower(filepath.ToSlash(filepath.Dir(p))), "start menu/programs")
+}
+
+// isDesktopLink trusts a path only when it is a Trinity shortcut in a folder named Desktop or in the Desktop the shell resolves now, which a localized Windows names differently.
 func isDesktopLink(ctx context.Context, p string) bool {
-	if !filepath.IsAbs(p) || !strings.EqualFold(filepath.Base(p), "Trinity.lnk") {
+	if !filepath.IsAbs(p) || !isShortcutName(p) {
 		return false
 	}
 	parent := filepath.Dir(p)
@@ -711,47 +735,5 @@ func removeShortcut(ctx context.Context, user, exe string, log func(string)) err
 		return err
 	}
 	log("Steam shortcut removed")
-	return nil
-}
-
-// removeManifest is listManifest's inverse; it leaves a file it cannot parse untouched.
-func removeManifest(ctx context.Context, steamRoot, manifest string, log func(string)) error {
-	cfg := filepath.Join(steamRoot, "config", "appconfig.json")
-	b, err := os.ReadFile(cfg)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	doc := map[string]json.RawMessage{}
-	if err := json.Unmarshal(b, &doc); err != nil {
-		return fmt.Errorf("SteamVR's %s is not readable JSON: %w", cfg, err)
-	}
-	var paths []string
-	if raw, ok := doc["manifest_paths"]; ok {
-		if err := json.Unmarshal(raw, &paths); err != nil {
-			return fmt.Errorf("SteamVR's %s has unexpected manifest_paths: %w", cfg, err)
-		}
-	}
-	kept := []string{}
-	for _, p := range paths {
-		if p != manifest && !(runtime.GOOS == "windows" && strings.EqualFold(p, manifest)) {
-			kept = append(kept, p)
-		}
-	}
-	if len(kept) == len(paths) {
-		log("manifest not listed for SteamVR")
-		return nil
-	}
-	doc["manifest_paths"], _ = json.Marshal(kept)
-	out, err := json.MarshalIndent(doc, "", "   ")
-	if err != nil {
-		return err
-	}
-	if err := writeAtomic(ctx, cfg, out); err != nil {
-		return err
-	}
-	log("manifest unlisted for SteamVR")
 	return nil
 }

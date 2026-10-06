@@ -38,6 +38,9 @@ type Target struct {
 	Poll time.Duration
 }
 
+// vrArgs start the headset's Trinity in VR without a mirror window; on the command line they last one session, so the menu's own choice is never overwritten.
+var vrArgs = []string{"+set", "vr_enabled", "1", "+set", "vr_mirrorEnabled", "0"}
+
 func New(sess frame.Session, reconnect Connector, gameID string) *Target {
 	return &Target{sess: sess, reconnect: reconnect, gameID: gameID, Poll: pollInterval,
 		ResponsePath: func() string { return fmt.Sprintf("/tmp/trinity-installer-%d/registered", time.Now().UnixNano()) }}
@@ -80,7 +83,7 @@ func (t *Target) PrepareDestination(ctx context.Context, log func(string)) (stri
 	if err := t.sess.MkdirAll(t.titleDir); err != nil {
 		return "", err
 	}
-	argv, _ := json.Marshal([]string{"trinity"})
+	argv, _ := json.Marshal(append([]string{"trinity"}, vrArgs...))
 	settings, _ := json.MarshalIndent(map[string]string{"compat_tool": compatTool, "steam_play": "0"}, "", "  ")
 	base := path.Join(t.sess.Home(), "devkit-game", t.gameID)
 	if err := t.sess.Put(ctx, base+"-argv.json", bytes.NewReader(argv), 0o644); err != nil {
@@ -203,7 +206,7 @@ func (t *Target) RegisterVR(ctx context.Context, appID uint32, art map[string][]
 		return err
 	}
 	manifest := path.Join(t.titleDir, "trinity.vrmanifest")
-	if err := t.sess.Put(ctx, manifest, bytes.NewReader(steam.Manifest(t.titleDir, "trinity", appID, "binary_path_linux_arm", "vrpreferences.json")), 0o644); err != nil {
+	if err := t.sess.Put(ctx, manifest, bytes.NewReader(steam.Manifest(t.titleDir, "trinity", appID, "binary_path_linux_arm", "vrpreferences.json", strings.Join(vrArgs, " "))), 0o644); err != nil {
 		return err
 	}
 	if _, err := t.sess.Run(ctx, vrcmdPrefix+"--appmanifest "+manifest); err != nil {

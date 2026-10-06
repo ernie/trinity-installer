@@ -2,7 +2,9 @@ package local
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,34 +15,60 @@ func (t *Target) windowsShortcut(ctx context.Context, log func(string)) error {
 	if err != nil {
 		return err
 	}
-	lnk := filepath.Join(programs, "Trinity.lnk")
-	if _, err := t.shellShortcut(ctx, fmt.Sprintf(`[IO.Directory]::CreateDirectory('%s')|Out-Null;$l='%s'`, psQuote(programs), psQuote(lnk))); err != nil {
-		return fmt.Errorf("creating the Start Menu shortcut: %w", err)
+	t.startMenuLnks = nil
+	for _, m := range t.launchModes() {
+		lnk := filepath.Join(programs, m.name+".lnk")
+		if _, err := t.shellShortcut(ctx, fmt.Sprintf(`[IO.Directory]::CreateDirectory('%s')|Out-Null;$l='%s'`, psQuote(programs), psQuote(lnk)), m.args); err != nil {
+			return fmt.Errorf("creating the Start Menu shortcut %s: %w", m.name, err)
+		}
+		t.startMenuLnks = append(t.startMenuLnks, lnk)
 	}
-	t.startMenuLnk = lnk
-	log("Start Menu shortcut written")
+	t.pruneLinks(t.rec.StartMenuLinks, isStartMenuLink, log)
+	log("Start Menu shortcuts written")
 	return nil
 }
 
-// windowsDesktopShortcut lets the shell resolve the Desktop, which OneDrive, redirection or a localized name can move, and reads the path back for the record.
+// pruneLinks removes recorded shortcuts under a name this run no longer writes, so a switched mode leaves no stray shortcut behind.
+func (t *Target) pruneLinks(recorded []string, ours func(string) bool, log func(string)) {
+	var keep []string
+	for _, m := range t.launchModes() {
+		keep = append(keep, m.name+".lnk")
+	}
+	for _, p := range recorded {
+		if containsFold(keep, filepath.Base(p)) || !ours(p) {
+			continue
+		}
+		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			log("could not remove the old shortcut " + p + ": " + err.Error())
+			continue
+		}
+		log("removed the old shortcut " + p)
+	}
+}
+
+// windowsDesktopShortcut lets the shell resolve the Desktop, which OneDrive, redirection or a localized name can move, and reads each path back for the record.
 func (t *Target) windowsDesktopShortcut(ctx context.Context, log func(string)) error {
-	out, err := t.shellShortcut(ctx, `$d=[Environment]::GetFolderPath('Desktop');if(-not $d){$d=Join-Path $env:USERPROFILE 'Desktop'};$l=Join-Path $d 'Trinity.lnk';[IO.Directory]::CreateDirectory($d)|Out-Null`)
-	if err != nil {
-		return fmt.Errorf("creating the Desktop shortcut: %w", err)
+	t.desktopLnks = nil
+	for _, m := range t.launchModes() {
+		name := m.name + ".lnk"
+		out, err := t.shellShortcut(ctx, fmt.Sprintf(`$d=[Environment]::GetFolderPath('Desktop');if(-not $d){$d=Join-Path $env:USERPROFILE 'Desktop'};$l=Join-Path $d '%s';[IO.Directory]::CreateDirectory($d)|Out-Null`, psQuote(name)), m.args)
+		if err != nil {
+			return fmt.Errorf("creating the Desktop shortcut %s: %w", m.name, err)
+		}
+		p := strings.TrimSpace(lastLine(string(out)))
+		if p == "" {
+			log(m.name + " written to the Desktop, but PowerShell did not print its path, so the uninstaller will leave it")
+			continue
+		}
+		// A path that does not exist was garbled on the way back, and recording it would leave the real shortcut behind silently.
+		if _, err := os.Stat(p); err != nil || !filepath.IsAbs(p) || !strings.EqualFold(filepath.Base(p), name) {
+			log(m.name + " written to the Desktop, but PowerShell printed " + p + ", which is not there, so the uninstaller will leave it")
+			continue
+		}
+		t.desktopLnks = append(t.desktopLnks, p)
 	}
-	t.desktopLnk = ""
-	p := strings.TrimSpace(lastLine(string(out)))
-	if p == "" {
-		log("Desktop shortcut written, but PowerShell did not print its path, so the uninstaller will leave it")
-		return nil
-	}
-	// A path that does not exist was garbled on the way back, and recording it would leave the real shortcut behind silently.
-	if _, err := os.Stat(p); err != nil || !filepath.IsAbs(p) || !strings.EqualFold(filepath.Base(p), "Trinity.lnk") {
-		log("Desktop shortcut written, but PowerShell printed " + p + ", which is not there, so the uninstaller will leave it")
-		return nil
-	}
-	t.desktopLnk = p
-	log("Desktop shortcut written")
+	t.pruneLinks(t.rec.DesktopLinks, func(p string) bool { return isDesktopLink(ctx, p) }, log)
+	log("Desktop shortcuts written")
 	return nil
 }
 
@@ -60,10 +88,10 @@ func shellDesktop(ctx context.Context) string {
 	return filepath.Join(profile, "Desktop")
 }
 
-// shellShortcut runs setup, which must set $l to the .lnk path, then writes the shortcut there and prints $l.
-func (t *Target) shellShortcut(ctx context.Context, setup string) ([]byte, error) {
-	ps := fmt.Sprintf(`%s%s;$s=(New-Object -ComObject WScript.Shell).CreateShortcut($l);$s.TargetPath='%s';$s.WorkingDirectory='%s';$s.IconLocation='%s,0';$s.Save();Write-Output $l`,
-		psUTF8, setup, psQuote(t.exe()), psQuote(t.opts.InstallDir), psQuote(t.exe()))
+// shellShortcut runs setup, which must set $l to the .lnk path, then writes the shortcut there with args and prints $l.
+func (t *Target) shellShortcut(ctx context.Context, setup, args string) ([]byte, error) {
+	ps := fmt.Sprintf(`%s%s;$s=(New-Object -ComObject WScript.Shell).CreateShortcut($l);$s.TargetPath='%s';$s.Arguments='%s';$s.WorkingDirectory='%s';$s.IconLocation='%s,0';$s.Save();Write-Output $l`,
+		psUTF8, setup, psQuote(t.exe()), psQuote(args), psQuote(t.opts.InstallDir), psQuote(t.exe()))
 	out, err := runCommand(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", ps)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", err, out)

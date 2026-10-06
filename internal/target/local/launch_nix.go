@@ -4,6 +4,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -15,29 +16,59 @@ func (t *Target) desktopFiles(log func(string)) error {
 	if err != nil {
 		return err
 	}
-	body := []byte("[Desktop Entry]\nType=Application\nName=Trinity\nExec=" + desktopExec(t.exe()) + "\nPath=" + desktopString(t.opts.InstallDir) + "\nIcon=" + desktopString(path.Join(t.opts.InstallDir, "trinity.png")) + "\nCategories=Game;\nTerminal=false\n")
+	var dirs []string
 	if t.opts.StartMenu {
-		if err := writeDesktopFile(filepath.Join(home, ".local", "share", "applications"), body, 0o644); err != nil {
-			return err
-		}
-		log("applications menu entry written")
+		dirs = append(dirs, filepath.Join(home, ".local", "share", "applications"))
 	}
 	if t.opts.Desktop {
-		dirs, _ := os.ReadFile(filepath.Join(home, ".config", "user-dirs.dirs"))
-		// File managers launch a desktop file only when it is executable.
-		if err := writeDesktopFile(xdgDesktopDir(home, string(dirs)), body, 0o755); err != nil {
-			return err
-		}
-		log("Desktop shortcut written")
+		userDirs, _ := os.ReadFile(filepath.Join(home, ".config", "user-dirs.dirs"))
+		dirs = append(dirs, xdgDesktopDir(home, string(userDirs)))
 	}
+	exec := desktopExec(t.exe())
+	modes := t.launchModes()
+	for i, dir := range dirs {
+		// File managers launch a desktop file on the Desktop only when it is executable.
+		mode := os.FileMode(0o644)
+		if t.opts.Desktop && i == len(dirs)-1 {
+			mode = 0o755
+		}
+		var written []string
+		for _, m := range modes {
+			body := []byte("[Desktop Entry]\nType=Application\nName=" + desktopString(m.name) + "\nExec=" + exec + " " + m.args + "\nPath=" + desktopString(t.opts.InstallDir) + "\nIcon=" + desktopString(path.Join(t.opts.InstallDir, "trinity.png")) + "\nCategories=Game;\nTerminal=false\n")
+			if err := writeDesktopFile(dir, m.file, body, mode); err != nil {
+				return err
+			}
+			written = append(written, m.file)
+		}
+		pruneDesktopFiles(dir, exec, written, log)
+	}
+	log("launch entries written")
 	return nil
 }
 
-func writeDesktopFile(dir string, body []byte, mode os.FileMode) error {
+// pruneDesktopFiles removes our entries under a name this run no longer writes; one that launches another program is not ours.
+func pruneDesktopFiles(dir, exec string, written []string, log func(string)) {
+	for _, name := range desktopFileNames {
+		p := filepath.Join(dir, name)
+		if slices.Contains(written, name) {
+			continue
+		}
+		if b, err := os.ReadFile(p); err != nil || !strings.Contains(string(b), "\nExec="+exec+" ") {
+			continue
+		}
+		if err := os.Remove(p); err != nil {
+			log("could not remove the old launch entry " + p + ": " + err.Error())
+			continue
+		}
+		log("removed the old launch entry " + p)
+	}
+}
+
+func writeDesktopFile(dir, name string, body []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	p := filepath.Join(dir, "trinity.desktop")
+	p := filepath.Join(dir, name)
 	if err := os.WriteFile(p, body, mode); err != nil {
 		return err
 	}

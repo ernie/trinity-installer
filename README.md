@@ -22,9 +22,11 @@ Every target needs a retail Quake III Arena install with its pak0 files. If the 
 
 The PC install goes to `C:\Games\Trinity` on Windows (no administrator rights needed; pick another folder on the Destination screen if you prefer), and under a per-user folder elsewhere: `~/.local/share/trinity` on Linux, and `~/Applications` plus `~/Library/Application Support/Trinity` on macOS.
 
-On Windows and Linux, the "Add to Start Menu" ("Add to applications menu" on Linux) and "Add to Desktop" boxes, both ticked by default, choose which launch shortcuts the installer creates.
+On Windows and Linux, the "Add to Start Menu" ("Add to applications menu" on Linux) and "Add to Desktop" boxes, both ticked by default, choose where the installer puts its two launch shortcuts: "Trinity (Flat)" starts on the monitor and "Trinity (VR)" in the headset, for that launch only.
 
 On Windows and Linux, when Steam (and SteamVR) is installed and the box is checked, the installer also writes a Steam shortcut (and registers Trinity with SteamVR). With several Steam users it adds the shortcut for the one who signed in last; when it cannot tell, the box stays off and says why. If Steam is running, the installer closes it to write the shortcut and starts it again when the install finishes.
+
+Launching Trinity from SteamVR always starts it in VR; every other launch (Start Menu, Desktop, the Steam library) uses the mode last chosen in Trinity's menu.
 
 ## Uninstalling
 

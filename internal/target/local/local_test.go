@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +30,12 @@ func TestDefaultsPerOS(t *testing.T) {
 	if m.InstallDir != "/Users/me/Applications" || m.PaksDir != "/Users/me/Library/Application Support/Trinity" {
 		t.Fatalf("%+v", m)
 	}
+	// VR is the default exactly when SteamVR is installed, and the other mode's shortcuts come along.
+	for _, o := range []Options{w, l, Defaults(runtime.GOOS, "amd64", "/home/me", `C:`)} {
+		if o.PreferVR != (o.SteamVRRoot != "") || !o.AlsoOther {
+			t.Fatalf("%+v", o)
+		}
+	}
 }
 
 func TestApplicable(t *testing.T) {
@@ -35,8 +43,9 @@ func TestApplicable(t *testing.T) {
 	if len(plan) != 6 || plan[4] != target.PushPatch || plan[5] != target.RegisterLaunchEntry {
 		t.Fatalf("%v", plan)
 	}
+	// SteamVR learns of the app from the VR Steam shortcut, so a PC install registers no manifest of its own.
 	plan, _ = target.Plan(context.Background(), New(Options{GOOS: "windows", AddToSteam: true, SteamRoot: "x", SteamUser: "x/userdata/1", SteamVRRoot: "y"}))
-	if len(plan) != 9 {
+	if len(plan) != 8 || plan[7] != target.InstallArtwork {
 		t.Fatalf("%v", plan)
 	}
 	plan, _ = target.Plan(context.Background(), New(Options{GOOS: "windows", AddToSteam: true, SteamRoot: "x", SteamUser: "x/userdata/1"}))
@@ -65,7 +74,7 @@ func TestLinuxDesktopEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"[Desktop Entry]", "Name=Trinity", "\nExec=/home/me/trinity/trinity\n", "\nPath=/home/me/trinity\n", "\nIcon=/home/me/trinity/trinity.png\n", "Categories=Game;"} {
+	for _, want := range []string{"[Desktop Entry]", "\nName=Trinity\n", "\nExec=/home/me/trinity/trinity +set vr_enabled 0\n", "\nPath=/home/me/trinity\n", "\nIcon=/home/me/trinity/trinity.png\n", "Categories=Game;"} {
 		if !strings.Contains(string(b), want) {
 			t.Fatalf("missing %q in %s", want, b)
 		}
@@ -92,7 +101,7 @@ func TestDesktopExecQuoting(t *testing.T) {
 
 func TestLaunchEntryIdempotent(t *testing.T) {
 	home := t.TempDir()
-	tg := New(Options{GOOS: "linux", InstallDir: filepath.Join(home, "trinity"), PaksDir: filepath.Join(home, "trinity"), StartMenu: true})
+	tg := New(Options{GOOS: "linux", InstallDir: filepath.Join(home, "trinity"), PaksDir: filepath.Join(home, "trinity"), StartMenu: true, AlsoOther: true})
 	tg.home = home
 	os.MkdirAll(tg.opts.InstallDir, 0o755)
 	for i := 0; i < 2; i++ {
@@ -101,7 +110,7 @@ func TestLaunchEntryIdempotent(t *testing.T) {
 		}
 	}
 	entries, _ := os.ReadDir(filepath.Join(home, ".local", "share", "applications"))
-	if len(entries) != 1 {
+	if len(entries) != 2 {
 		t.Fatalf("%v", entries)
 	}
 }
@@ -141,7 +150,7 @@ func TestWindowsShortcutCommand(t *testing.T) {
 	}
 	defer func() { runCommand = old }()
 	t.Setenv("APPDATA", `D:\Roaming`)
-	tg := New(Options{GOOS: "windows", InstallDir: `C:\Users\me\AppData\Local\Trinity`, StartMenu: true})
+	tg := New(Options{GOOS: "windows", InstallDir: `C:\Users\me\AppData\Local\Trinity`, StartMenu: true, PreferVR: true})
 	tg.home = `C:\Users\me`
 	if err := tg.RegisterLaunchEntry(context.Background(), func(string) {}); err != nil {
 		t.Fatal(err)
@@ -151,7 +160,7 @@ func TestWindowsShortcutCommand(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 	// A redirected APPDATA moves the Start Menu with it.
-	if !strings.Contains(joined, `D:\Roaming\Microsoft\Windows\Start Menu\Programs\Trinity.lnk`) {
+	if !strings.Contains(joined, `$l='D:\Roaming\Microsoft\Windows\Start Menu\Programs\Trinity.lnk'`) || !strings.Contains(joined, "$s.Arguments='+set vr_enabled 1'") {
 		t.Fatalf("%v", got)
 	}
 	t.Setenv("APPDATA", "")
@@ -171,117 +180,122 @@ func TestPSQuoteDoublesEveryQuote(t *testing.T) {
 	}
 }
 
-func TestSteamShortcutArtworkAndManifest(t *testing.T) {
+func TestSteamShortcutsAndArtwork(t *testing.T) {
 	var cmds [][]string
-	install := t.TempDir()
-	capsule := filepath.Join(install, "trinity-capsule.png")
 	old := runCommand
 	runCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		cmds = append(cmds, append([]string{name}, args...))
-		if b, err := os.ReadFile(capsule); err != nil || string(b) != "\x01" {
-			t.Errorf("capsule not in place before vrcmd: %q %v", b, err)
-		}
 		return nil, nil
 	}
 	defer func() { runCommand = old }()
+	install := t.TempDir()
 	steamRoot := t.TempDir()
 	user := filepath.Join(steamRoot, "userdata", "10005062")
 	os.MkdirAll(filepath.Join(user, "config"), 0o755)
 	// A second user proves the hooks write to the user the Destination screen chose.
 	os.MkdirAll(filepath.Join(steamRoot, "userdata", "20005063", "config"), 0o755)
-	os.WriteFile(filepath.Join(install, "trinity.exe"), []byte("x"), 0o755)
-	vr := filepath.Join(t.TempDir(), "SteamVR")
-	os.MkdirAll(filepath.Join(vr, "bin", "win64"), 0o755)
-	tg := New(Options{GOOS: "windows", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot, SteamUser: user, SteamVRRoot: vr})
-	tg.steamVRRunning = func() (bool, error) {
-		// The appconfig.json write follows this check, so the capsule must already be there.
-		if _, err := os.Stat(capsule); err != nil {
-			t.Errorf("capsule not in place before the SteamVR check: %v", err)
-		}
-		return false, nil
-	}
-	if err := tg.registerSteamShortcut(context.Background(), func(string) {}); err != nil {
-		t.Fatal(err)
-	}
-	id, err := tg.ReadAppID(context.Background(), func(string) {})
-	if err != nil || id == 0 {
-		t.Fatalf("%d %v", id, err)
-	}
-	art := map[string][]byte{"capsule": {1}, "wide": {2}, "hero": {3}, "logo": {4}, "icon": {5}}
-	if err := tg.InstallArtwork(context.Background(), id, art, func(string) {}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(steamRoot, "userdata", "10005062", "config", "grid", "{id}p.png")); err == nil {
-		t.Fatal("literal {id} written")
-	}
-	grid, _ := os.ReadDir(filepath.Join(steamRoot, "userdata", "10005062", "config", "grid"))
-	if len(grid) != 5 {
-		t.Fatalf("%v", grid)
-	}
+	vdf := filepath.Join(user, "config", "shortcuts.vdf")
+	other, _, _ := steam.AppendShortcut(nil, steam.Shortcut{AppName: "Other", Exe: `C:\Other\other.exe`}, "")
+	os.WriteFile(vdf, other, 0o644)
 	cfg := filepath.Join(steamRoot, "config", "appconfig.json")
 	os.MkdirAll(filepath.Dir(cfg), 0o755)
-	os.WriteFile(cfg, []byte(`{"manifest_paths":["C:\\other.vrmanifest"],"other_key":7}`), 0o644)
-	if err := tg.RegisterVR(context.Background(), id, art, func(string) {}); err != nil {
-		t.Fatal(err)
+	os.WriteFile(cfg, []byte(`{"manifest_paths":["C:\\other.vrmanifest"]}`), 0o644)
+	exe := filepath.Join(install, "trinity.exe")
+	art := map[string][]byte{"capsule": {1}, "wide": {2}, "hero": {3}, "logo": {4}, "icon": {5}}
+	grid := filepath.Join(user, "config", "grid")
+	gridIDs := func() map[uint32]int {
+		ids := map[uint32]int{}
+		entries, _ := os.ReadDir(grid)
+		for _, e := range entries {
+			for _, id := range []uint32{steam.ShortcutAppID(exe, "Trinity"), steam.ShortcutAppID(exe, "Trinity (VR)"), steam.ShortcutAppID(exe, "Trinity (Flat)")} {
+				for _, name := range steam.GridFiles(id) {
+					if e.Name() == name {
+						ids[id]++
+					}
+				}
+			}
+		}
+		return ids
 	}
-	// SteamVR not running: the manifest path is appended to appconfig.json instead of calling vrcmd.
-	b, _ := os.ReadFile(cfg)
-	if !strings.Contains(string(b), "trinity.vrmanifest") || len(cmds) != 0 {
-		t.Fatalf("%s %v", b, cmds)
+	run := func(preferVR, alsoOther bool) []steam.Shortcut {
+		tg := New(Options{GOOS: "windows", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot, SteamUser: user, SteamVRRoot: t.TempDir(), PreferVR: preferVR, AlsoOther: alsoOther})
+		if err := tg.registerSteamShortcut(context.Background(), func(string) {}); err != nil {
+			t.Fatal(err)
+		}
+		id, err := tg.ReadAppID(context.Background(), func(string) {})
+		if err != nil || id != steam.ShortcutAppID(exe, "Trinity") {
+			t.Fatalf("the plain Trinity shortcut's id is the one the plan carries: %d %v", id, err)
+		}
+		if err := tg.InstallArtwork(context.Background(), id, art, func(string) {}); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(vdf)
+		list, err := steam.ParseShortcuts(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ours []steam.Shortcut
+		for _, s := range list {
+			if s.AppName != "Other" {
+				ours = append(ours, s)
+			}
+		}
+		if len(ours) != len(list)-1 {
+			t.Fatal("another game's shortcut was dropped")
+		}
+		sort.Slice(ours, func(i, j int) bool { return ours[i].AppName < ours[j].AppName })
+		return ours
 	}
-	if !strings.Contains(string(b), "other.vrmanifest") || !strings.Contains(string(b), "other_key") {
-		t.Fatalf("existing appconfig.json content lost: %s", b)
-	}
-	if err := tg.RegisterVR(context.Background(), id, art, func(string) {}); err != nil {
-		t.Fatal(err)
-	}
-	b, _ = os.ReadFile(cfg)
-	if strings.Count(string(b), "trinity.vrmanifest") != 1 {
-		t.Fatalf("manifest listed twice: %s", b)
-	}
-	if b, err := os.ReadFile(capsule); err != nil || string(b) != "\x01" {
-		t.Fatalf("capsule %q %v", b, err)
-	}
-	if m, _ := os.ReadFile(filepath.Join(install, "trinity.vrmanifest")); !strings.Contains(string(m), "trinity.exe") || strings.Contains(string(m), "vrpreferences") {
-		t.Fatalf("the PC manifest must not name a vrpreferences.json the PC zips lack: %s", m)
-	}
-	for _, dir := range []string{filepath.Dir(cfg), filepath.Join(user, "config")} {
-		if parts, _ := filepath.Glob(filepath.Join(dir, "*.part")); len(parts) != 0 {
-			t.Fatalf("temp files left: %v", parts)
+	want := func(got []steam.Shortcut, want ...steam.Shortcut) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("%+v, want %+v", got, want)
+		}
+		for i, w := range want {
+			w.AppID, w.Exe = steam.ShortcutAppID(exe, w.AppName), `"`+exe+`"`
+			if got[i] != w {
+				t.Fatalf("%+v, want %+v", got[i], w)
+			}
 		}
 	}
-	tg.steamVRRunning = func() (bool, error) { return true, nil }
-	if err := tg.RegisterVR(context.Background(), id, art, func(string) {}); err != nil {
-		t.Fatal(err)
+	vr := steam.Shortcut{AppName: "Trinity", LaunchOptions: "+set vr_enabled 1", OpenVR: true}
+	flatAlt := steam.Shortcut{AppName: "Trinity (Flat)", LaunchOptions: "+set vr_enabled 0"}
+	want(run(true, true), vr, flatAlt)
+	if ids := gridIDs(); len(ids) != 2 || ids[steam.ShortcutAppID(exe, "Trinity")] != 5 || ids[steam.ShortcutAppID(exe, "Trinity (Flat)")] != 5 {
+		t.Fatalf("every shortcut gets the five grid files: %v", ids)
 	}
-	if len(cmds) != 1 || !strings.HasSuffix(cmds[0][0], "vrcmd.exe") {
-		t.Fatalf("%v", cmds)
+	// A reinstall that switches the preferred mode ends with exactly the new set, art included.
+	flat := steam.Shortcut{AppName: "Trinity", LaunchOptions: "+set vr_enabled 0"}
+	vrAlt := steam.Shortcut{AppName: "Trinity (VR)", LaunchOptions: "+set vr_enabled 1", OpenVR: true}
+	want(run(false, true), flat, vrAlt)
+	if ids := gridIDs(); len(ids) != 2 || ids[steam.ShortcutAppID(exe, "Trinity (VR)")] != 5 || ids[steam.ShortcutAppID(exe, "Trinity (Flat)")] != 0 {
+		t.Fatalf("%v", ids)
+	}
+	want(run(false, false), flat)
+	if ids := gridIDs(); len(ids) != 1 || ids[steam.ShortcutAppID(exe, "Trinity")] != 5 {
+		t.Fatalf("%v", ids)
+	}
+	for _, p := range []string{filepath.Join(install, "trinity.vrmanifest"), filepath.Join(install, "trinity-capsule.png")} {
+		if exists(p) {
+			t.Fatalf("%s written for a PC install", p)
+		}
+	}
+	if b, _ := os.ReadFile(cfg); string(b) != `{"manifest_paths":["C:\\other.vrmanifest"]}` || len(cmds) != 0 {
+		t.Fatalf("SteamVR registration touched: %s %v", b, cmds)
+	}
+	if parts, _ := filepath.Glob(filepath.Join(user, "config", "*.part")); len(parts) != 0 {
+		t.Fatalf("temp files left: %v", parts)
 	}
 }
 
-func TestRegisterVRNeedsCapsule(t *testing.T) {
-	var cmds [][]string
-	old := runCommand
-	runCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		cmds = append(cmds, append([]string{name}, args...))
-		return nil, nil
-	}
-	defer func() { runCommand = old }()
+func TestRegisterVRIsNotForPCInstalls(t *testing.T) {
 	install := t.TempDir()
-	steamRoot := t.TempDir()
-	tg := New(Options{GOOS: "windows", InstallDir: install, SteamRoot: steamRoot, SteamVRRoot: t.TempDir()})
-	tg.steamVRRunning = func() (bool, error) { return true, nil }
-	err := tg.RegisterVR(context.Background(), 1, map[string][]byte{"wide": {2}}, func(string) {})
-	if err == nil || err.Error() != "no artwork for capsule" {
-		t.Fatalf("%v", err)
+	tg := New(Options{GOOS: "windows", InstallDir: install, SteamRoot: t.TempDir(), SteamVRRoot: t.TempDir()})
+	if err := tg.RegisterVR(context.Background(), 1, map[string][]byte{"capsule": {1}}, func(string) {}); err == nil {
+		t.Fatal("RegisterVR must refuse; the plan never lists it")
 	}
-	if len(cmds) != 0 {
-		t.Fatalf("%v", cmds)
-	}
-	for _, p := range []string{filepath.Join(install, "trinity.vrmanifest"), filepath.Join(install, "trinity-capsule.png"), filepath.Join(steamRoot, "config", "appconfig.json")} {
-		if _, err := os.Stat(p); err == nil {
-			t.Fatalf("%s written", p)
-		}
+	if exists(filepath.Join(install, "trinity.vrmanifest")) {
+		t.Fatal("manifest written")
 	}
 }
 
@@ -294,7 +308,7 @@ func TestSteamRunningBlocksShortcut(t *testing.T) {
 	os.MkdirAll(filepath.Dir(vdf), 0o755)
 	home := t.TempDir()
 	install := filepath.Join(home, "trinity")
-	tg := New(Options{GOOS: "linux", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot, SteamUser: filepath.Join(steamRoot, "userdata", "10005062"), StartMenu: true})
+	tg := New(Options{GOOS: "linux", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot, SteamUser: filepath.Join(steamRoot, "userdata", "10005062"), StartMenu: true, AlsoOther: true})
 	tg.home = home
 	tg.steamRunning = func() (bool, error) { return true, nil }
 	tg.wait = func(time.Duration) <-chan time.Time { c := make(chan time.Time, 1); c <- time.Time{}; return c }
@@ -317,7 +331,7 @@ func TestSteamRunningBlocksShortcut(t *testing.T) {
 		t.Fatalf("%d %v", id, err)
 	}
 	entries, _ := os.ReadDir(filepath.Join(home, ".local", "share", "applications"))
-	if len(entries) != 1 {
+	if len(entries) != 2 {
 		t.Fatalf("%v", entries)
 	}
 }
@@ -373,21 +387,6 @@ func TestFailedProcessCheckStopsTheShortcut(t *testing.T) {
 	}
 }
 
-func TestAppConfigUnreadableIsAnError(t *testing.T) {
-	steamRoot := t.TempDir()
-	cfg := filepath.Join(steamRoot, "config", "appconfig.json")
-	os.MkdirAll(filepath.Dir(cfg), 0o755)
-	os.WriteFile(cfg, []byte("not json"), 0o644)
-	tg := New(Options{GOOS: "linux", InstallDir: t.TempDir(), SteamRoot: steamRoot, SteamVRRoot: "vr"})
-	tg.steamVRRunning = func() (bool, error) { return false, nil }
-	if err := tg.RegisterVR(context.Background(), 1, map[string][]byte{"capsule": {1}}, func(string) {}); err == nil || !strings.Contains(err.Error(), "not readable JSON") {
-		t.Fatalf("a malformed appconfig.json must not be overwritten: %v", err)
-	}
-	if b, _ := os.ReadFile(cfg); string(b) != "not json" {
-		t.Fatalf("%s", b)
-	}
-}
-
 func TestSteamVRRunning(t *testing.T) {
 	old := runCommand
 	defer func() { runCommand = old }()
@@ -396,43 +395,27 @@ func TestSteamVRRunning(t *testing.T) {
 		got = append([]string{name}, args...)
 		return []byte("INFO: No tasks are running which match the specified criteria.\r\n"), nil
 	}
-	tg := New(Options{GOOS: "windows"})
-	if on, err := tg.steamVRRunning(); on || err != nil || got[0] != "tasklist" {
+	if on, err := processRunning("windows", "vrserver"); on || err != nil || got[0] != "tasklist" {
 		t.Fatalf("%v %v %v", on, err, got)
 	}
 	runCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		return []byte(`"vrserver.exe","1234","Console","1","40,000 K"` + "\r\n"), nil
 	}
-	if on, err := tg.steamVRRunning(); !on || err != nil {
+	if on, err := processRunning("windows", "vrserver"); !on || err != nil {
 		t.Fatalf("vrserver.exe listed but not seen: %v", err)
 	}
 	runCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		got = append([]string{name}, args...)
 		return nil, nil
 	}
-	tg = New(Options{GOOS: "linux"})
-	if on, err := tg.steamVRRunning(); !on || err != nil || strings.Join(got, " ") != "pgrep -x vrserver" {
+	if on, err := processRunning("linux", "vrserver"); !on || err != nil || strings.Join(got, " ") != "pgrep -x vrserver" {
 		t.Fatalf("%v %v %v", on, err, got)
 	}
 	for _, fail := range []error{exitErr(2), os.ErrNotExist} {
 		runCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) { return nil, fail }
-		if _, err := tg.steamVRRunning(); err == nil {
+		if _, err := processRunning("linux", "vrserver"); err == nil {
 			t.Fatalf("pgrep failure %v read as an answer", fail)
 		}
-	}
-}
-
-func TestFailedVRCheckStopsRegistration(t *testing.T) {
-	old := runCommand
-	defer func() { runCommand = old }()
-	runCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) { return nil, exitErr(2) }
-	steamRoot := t.TempDir()
-	tg := New(Options{GOOS: "linux", InstallDir: t.TempDir(), SteamRoot: steamRoot, SteamVRRoot: "vr"})
-	if err := tg.RegisterVR(context.Background(), 1, map[string][]byte{"capsule": {1}}, func(string) {}); err == nil || !strings.Contains(err.Error(), "SteamVR is running") {
-		t.Fatalf("%v", err)
-	}
-	if _, err := os.Stat(filepath.Join(steamRoot, "config", "appconfig.json")); err == nil {
-		t.Fatal("appconfig.json edited after a failed check")
 	}
 }
 
@@ -573,5 +556,50 @@ func TestDoneSaysUpdatedOverAnExistingRecord(t *testing.T) {
 	}
 	if !strings.HasPrefix(again.Done(), "Trinity is updated.") {
 		t.Fatalf("re-install: %q", again.Done())
+	}
+}
+
+func TestReinstallKeepsTheUsersSettingsOnAKeptSteamShortcut(t *testing.T) {
+	install := t.TempDir()
+	steamRoot := t.TempDir()
+	user := filepath.Join(steamRoot, "userdata", "10005062")
+	vdf := filepath.Join(user, "config", "shortcuts.vdf")
+	exe := filepath.Join(install, "trinity.exe")
+	run := func(preferVR, alsoOther bool) {
+		tg := New(Options{GOOS: "windows", InstallDir: install, PaksDir: install, AddToSteam: true, SteamRoot: steamRoot, SteamUser: user, PreferVR: preferVR, AlsoOther: alsoOther})
+		if err := tg.registerSteamShortcut(context.Background(), func(string) {}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run(false, true)
+	// The user hides Trinity, tags it, gives it an icon and turns the overlay off in Steam.
+	b, _ := os.ReadFile(vdf)
+	m, _ := steam.ParseBinaryVDF(b)
+	for _, v := range m["shortcuts"].(map[string]any) {
+		if e := v.(map[string]any); e["AppName"] == "Trinity" {
+			e["IsHidden"], e["AllowOverlay"], e["icon"], e["tags"] = int32(1), int32(0), `C:\icons\t.ico`, map[string]any{"0": "Favorites"}
+		}
+	}
+	b, _ = steam.EncodeBinaryVDF(m)
+	os.WriteFile(vdf, b, 0o644)
+	run(true, false)
+	b, _ = os.ReadFile(vdf)
+	m, _ = steam.ParseBinaryVDF(b)
+	list := m["shortcuts"].(map[string]any)
+	if len(list) != 1 {
+		t.Fatalf("switching to VR without the alternate leaves only Trinity: %+v", list)
+	}
+	for _, v := range list {
+		e := v.(map[string]any)
+		want := map[string]any{"AppName": "Trinity", "appid": int32(steam.ShortcutAppID(exe, "Trinity")), "LaunchOptions": "+set vr_enabled 1", "OpenVR": int32(1),
+			"IsHidden": int32(1), "AllowOverlay": int32(0), "icon": `C:\icons\t.ico`}
+		for k, w := range want {
+			if e[k] != w {
+				t.Fatalf("%s: %v, want %v", k, e[k], w)
+			}
+		}
+		if tags, _ := e["tags"].(map[string]any); tags["0"] != "Favorites" {
+			t.Fatalf("tags lost: %+v", e["tags"])
+		}
 	}
 }

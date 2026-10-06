@@ -3,13 +3,13 @@ package local
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,19 +20,18 @@ import (
 )
 
 type Target struct {
-	opts           Options
-	home           string
-	homeErr        error
-	appID          uint32
-	steamVRRunning func() (bool, error)
-	steamRunning   func() (bool, error)
+	opts         Options
+	home         string
+	homeErr      error
+	appIDs       []uint32 // the Steam shortcuts this run wrote, the plain "Trinity" first
+	steamRunning func() (bool, error)
 	// updated is set when the destination already held an install record, so Done says so.
-	updated      bool
-	registry     registryWriter
-	tag          string
-	rec          installRecord // what this install wrote, so the uninstaller removes exactly that
-	startMenuLnk string        // the shortcuts this run wrote; "" when not asked for or not written
-	desktopLnk   string
+	updated       bool
+	registry      registryWriter
+	tag           string
+	rec           installRecord // what this install wrote, so the uninstaller removes exactly that
+	startMenuLnks []string      // the shortcuts this run wrote; empty when not asked for or not written
+	desktopLnks   []string
 	// wait, detach and spawn are seams so tests neither sleep nor start programs.
 	wait            func(time.Duration) <-chan time.Time
 	detach          func(cmdLine, dir string) error
@@ -42,18 +41,44 @@ type Target struct {
 	entryWritten    bool // the Settings > Apps entry exists, so later steps keep its size current
 }
 
+// launchMode is one shortcut; the engine keeps a command-line vr_enabled for that session only, so the menu's own choice survives.
+type launchMode struct {
+	name, file, args string
+	vr               bool
+}
+
+var (
+	vrMode   = launchMode{"Trinity (VR)", "trinity-vr.desktop", "+set vr_enabled 1", true}
+	flatMode = launchMode{"Trinity (Flat)", "trinity-flat.desktop", "+set vr_enabled 0", false}
+	// shortcutNames are every launch name this installer writes, so a reinstall and the uninstaller recognize all of them whatever the choices.
+	shortcutNames    = []string{"Trinity", vrMode.name, flatMode.name}
+	desktopFileNames = []string{"trinity.desktop", vrMode.file, flatMode.file}
+)
+
+// launchModes are the shortcuts each launch place gets: "Trinity" in the preferred mode, then the other mode when asked for.
+func (t *Target) launchModes() []launchMode {
+	pref, other := flatMode, vrMode
+	if t.opts.PreferVR {
+		pref, other = vrMode, flatMode
+	}
+	pref.name, pref.file = "Trinity", "trinity.desktop"
+	if t.opts.AlsoOther {
+		return []launchMode{pref, other}
+	}
+	return []launchMode{pref}
+}
+
 func New(o Options) *Target {
 	home, err := os.UserHomeDir()
 	return &Target{
-		opts:           o,
-		home:           home,
-		homeErr:        err,
-		steamVRRunning: func() (bool, error) { return processRunning(o.GOOS, "vrserver") },
-		steamRunning:   func() (bool, error) { return processRunning(o.GOOS, "steam") },
-		registry:       defaultRegistry(),
-		wait:           time.After,
-		detach:         startDetached,
-		spawn:          spawnDetached,
+		opts:         o,
+		home:         home,
+		homeErr:      err,
+		steamRunning: func() (bool, error) { return processRunning(o.GOOS, "steam") },
+		registry:     defaultRegistry(),
+		wait:         time.After,
+		detach:       startDetached,
+		spawn:        spawnDetached,
 	}
 }
 
@@ -93,11 +118,9 @@ func (t *Target) Applicable(context.Context) ([]target.Step, error) {
 	if t.opts.GOOS == "windows" || t.opts.GOOS == "linux" && (t.opts.StartMenu || t.opts.Desktop || t.steamShortcut()) {
 		steps = append(steps, target.RegisterLaunchEntry)
 	}
+	// No RegisterVR: the VR Steam shortcut's OpenVR flag has Steam register it with SteamVR, and a manifest of ours would claim the same app key.
 	if t.steamShortcut() {
 		steps = append(steps, target.ReadAppID, target.InstallArtwork)
-		if t.opts.SteamVRRoot != "" {
-			steps = append(steps, target.RegisterVR)
-		}
 	}
 	return steps, nil
 }
@@ -219,28 +242,27 @@ func (t *Target) RegisterLaunchEntry(ctx context.Context, log func(string)) erro
 	if err := t.registerDesktopEntry(ctx, log); err != nil {
 		return err
 	}
-	// Record the shortcuts before the Steam part, so a Steam that will not close still leaves them uninstallable.
-	if t.opts.GOOS == "windows" {
-		if err := t.registerUninstall(ctx, log); err != nil {
+	if t.steamShortcut() {
+		// Record the shortcuts before the Steam part, so a Steam that will not close still leaves them uninstallable.
+		if t.opts.GOOS == "windows" {
+			if err := t.registerUninstall(ctx, log); err != nil {
+				return err
+			}
+		}
+		// Steam rewrites shortcuts.vdf from memory when it exits, which would drop a shortcut written while it runs.
+		running, err := t.steamRunning()
+		if err != nil {
+			return fmt.Errorf("could not tell whether Steam is running: %v. %w", err, ErrSteamRunning)
+		}
+		if running {
+			log("closing Steam")
+			if err := t.CloseSteam(ctx, log); err != nil {
+				return fmt.Errorf("Steam is running and did not close: %v. %w", err, ErrSteamRunning)
+			}
+		}
+		if err := t.registerSteamShortcut(ctx, log); err != nil {
 			return err
 		}
-	}
-	if !t.steamShortcut() {
-		return nil
-	}
-	// Steam rewrites shortcuts.vdf from memory when it exits, which would drop a shortcut written while it runs.
-	running, err := t.steamRunning()
-	if err != nil {
-		return fmt.Errorf("could not tell whether Steam is running: %v. %w", err, ErrSteamRunning)
-	}
-	if running {
-		log("closing Steam")
-		if err := t.CloseSteam(ctx, log); err != nil {
-			return fmt.Errorf("Steam is running and did not close: %v. %w", err, ErrSteamRunning)
-		}
-	}
-	if err := t.registerSteamShortcut(ctx, log); err != nil {
-		return err
 	}
 	if t.opts.GOOS == "windows" {
 		return t.registerUninstall(ctx, log)
@@ -271,23 +293,57 @@ func (t *Target) registerSteamShortcut(ctx context.Context, log func(string)) er
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	out, id, err := steam.AppendShortcut(old, steam.Shortcut{AppName: "Trinity", Exe: t.exe()}, t.opts.InstallDir)
+	// Only names this run does not write go, so a switched mode or a dropped alternate leaves none of the old ones while a kept entry keeps the user's settings.
+	modes := t.launchModes()
+	var names []string
+	for _, m := range modes {
+		names = append(names, m.name)
+	}
+	out, _, err := steam.RemoveShortcutsExcept(old, t.exe(), names)
 	if err != nil {
 		return err
+	}
+	var ids []uint32
+	for _, m := range modes {
+		var id uint32
+		out, id, err = steam.AppendShortcut(out, steam.Shortcut{AppName: m.name, Exe: t.exe(), LaunchOptions: m.args, OpenVR: m.vr}, t.opts.InstallDir)
+		if err != nil {
+			return err
+		}
+		ids = append(ids, id)
 	}
 	if err := writeAtomic(ctx, p, out); err != nil {
 		return err
 	}
-	t.appID = id
-	log(fmt.Sprintf("Steam shortcut written (app id %d); Steam shows it at its next start", id))
+	t.appIDs = ids
+	for _, name := range shortcutNames {
+		if id := steam.ShortcutAppID(t.exe(), name); !slices.Contains(ids, id) {
+			if err := removeGridArt(t.opts.SteamUser, id); err != nil {
+				log("could not remove the artwork of an old shortcut: " + err.Error())
+			}
+		}
+	}
+	log(fmt.Sprintf("Steam shortcuts written (app ids %v); Steam shows them at its next start", ids))
 	return nil
 }
 
+// removeGridArt removes one shortcut's grid files; a file already gone is fine.
+func removeGridArt(user string, appID uint32) error {
+	var errs []error
+	for _, name := range steam.GridFiles(appID) {
+		if err := os.Remove(filepath.Join(user, "config", "grid", name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// ReadAppID carries the plain "Trinity" shortcut's id; InstallArtwork covers the whole set this run wrote.
 func (t *Target) ReadAppID(context.Context, func(string)) (uint32, error) {
-	if t.appID == 0 {
+	if len(t.appIDs) == 0 {
 		return 0, fmt.Errorf("the Steam shortcut was not written")
 	}
-	return t.appID, nil
+	return t.appIDs[0], nil
 }
 
 func (t *Target) InstallArtwork(ctx context.Context, appID uint32, art map[string][]byte, log func(string)) error {
@@ -295,94 +351,30 @@ func (t *Target) InstallArtwork(ctx context.Context, appID uint32, art map[strin
 	if err := os.MkdirAll(grid, 0o755); err != nil {
 		return err
 	}
-	for slot, name := range steam.GridFiles(appID) {
-		png, ok := art[slot]
-		if !ok {
-			return fmt.Errorf("no artwork for %s", slot)
-		}
-		if err := os.WriteFile(filepath.Join(grid, name), png, 0o644); err != nil {
-			return err
-		}
-		log("installed " + name)
+	ids := t.appIDs
+	if len(ids) == 0 {
+		ids = []uint32{appID}
 	}
-	return nil
-}
-
-func (t *Target) RegisterVR(ctx context.Context, appID uint32, art map[string][]byte, log func(string)) error {
-	// The manifest's image_path names the capsule, so it must be in place before SteamVR reads the manifest.
-	capsule, ok := art["capsule"]
-	if !ok {
-		return errors.New("no artwork for capsule")
-	}
-	if err := os.WriteFile(filepath.Join(t.opts.InstallDir, "trinity-capsule.png"), capsule, 0o644); err != nil {
-		return err
-	}
-	manifest := filepath.Join(t.opts.InstallDir, "trinity.vrmanifest")
-	key := map[string]string{"windows": "binary_path_windows", "linux": "binary_path_linux"}[t.opts.GOOS]
-	if err := os.WriteFile(manifest, steam.Manifest(t.opts.InstallDir, filepath.Base(t.exe()), appID, key, ""), 0o644); err != nil {
-		return err
-	}
-	t.recordFile(filepath.Join(t.opts.InstallDir, "trinity-capsule.png"))
-	t.recordFile(manifest)
-	if err := t.saveRecord(ctx); err != nil {
-		return err
-	}
-	running, err := t.steamVRRunning()
-	if err != nil {
-		return fmt.Errorf("could not tell whether SteamVR is running: %w", err)
-	}
-	if running {
-		name, args, err := steam.VrcmdArgs(t.opts.SteamVRRoot, t.opts.GOOS, manifest)
-		if err != nil {
-			return err
-		}
-		if out, err := runCommand(ctx, name, args...); err != nil {
-			return fmt.Errorf("SteamVR did not accept the manifest: %w: %s", err, out)
-		}
-		log("SteamVR registered the manifest")
-		return nil
-	}
-	return t.listManifest(ctx, manifest, log)
-}
-
-// listManifest edits appconfig.json, which SteamVR reads at startup; with vrserver down nothing can clobber the edit.
-func (t *Target) listManifest(ctx context.Context, manifest string, log func(string)) error {
-	cfg := filepath.Join(t.opts.SteamRoot, "config", "appconfig.json")
-	doc := map[string]json.RawMessage{}
-	var paths []string
-	b, err := os.ReadFile(cfg)
-	switch {
-	case err == nil:
-		if err := json.Unmarshal(b, &doc); err != nil {
-			return fmt.Errorf("SteamVR's %s is not readable JSON: %w", cfg, err)
-		}
-		if raw, ok := doc["manifest_paths"]; ok {
-			if err := json.Unmarshal(raw, &paths); err != nil {
-				return fmt.Errorf("SteamVR's %s has unexpected manifest_paths: %w", cfg, err)
+	for _, id := range ids {
+		for slot, name := range steam.GridFiles(id) {
+			png, ok := art[slot]
+			if !ok {
+				return fmt.Errorf("no artwork for %s", slot)
 			}
-		}
-	case !os.IsNotExist(err):
-		return err
-	}
-	for _, p := range paths {
-		if p == manifest || (t.opts.GOOS == "windows" && strings.EqualFold(p, manifest)) {
-			log("manifest already listed for SteamVR")
-			return nil
+			if err := os.WriteFile(filepath.Join(grid, name), png, 0o644); err != nil {
+				return err
+			}
+			log("installed " + name)
 		}
 	}
-	doc["manifest_paths"], _ = json.Marshal(append(paths, manifest))
-	out, err := json.MarshalIndent(doc, "", "   ")
-	if err != nil {
-		return err
-	}
-	if err := writeAtomic(ctx, cfg, out); err != nil {
-		return err
-	}
-	log("manifest listed for SteamVR's next start")
 	return nil
 }
 
-// writeAtomic swaps a finished temp file into place, so Steam never reads a half-written shortcuts.vdf or appconfig.json.
+func (t *Target) RegisterVR(context.Context, uint32, map[string][]byte, func(string)) error {
+	return errors.New("a PC install registers with SteamVR through its VR Steam shortcut, not a manifest")
+}
+
+// writeAtomic swaps a finished temp file into place, so Steam never reads a half-written shortcuts.vdf.
 func writeAtomic(ctx context.Context, p string, b []byte) error {
 	return store.Local().Put(ctx, p, bytes.NewReader(b), int64(len(b)), 0o644)
 }

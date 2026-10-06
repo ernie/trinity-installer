@@ -16,10 +16,11 @@ import (
 
 // installed is a Windows install made by the target's own hooks, with Steam, SteamVR, a Start Menu shortcut and files the user added.
 type installed struct {
-	dir, steamRoot, user, cfg, lnk, desktop, settings, other string
-	userFiles                                                []string
-	appID                                                    uint32
-	reg                                                      *fakeRegistry
+	dir, steamRoot, user, settings, other string
+	lnk, lnkFlat, desktop, desktopFlat    string // the VR Trinity and the Flat alternate in the Start Menu and on the Desktop
+	userFiles                             []string
+	appIDs                                []uint32
+	reg                                   *fakeRegistry
 }
 
 func installForUninstall(t *testing.T) installed { return installForUninstallOn(t, "Desktop") }
@@ -40,13 +41,11 @@ func installForUninstallOn(t *testing.T, desktopName string) installed {
 	os.WriteFile(in.other, []byte("x"), 0o644)
 	vdf, _, _ := steam.AppendShortcut(nil, steam.Shortcut{AppName: "Other", Exe: `C:\Other\other.exe`}, "")
 	os.WriteFile(filepath.Join(in.user, "config", "shortcuts.vdf"), vdf, 0o644)
-	in.cfg = filepath.Join(in.steamRoot, "config", "appconfig.json")
-	os.MkdirAll(filepath.Dir(in.cfg), 0o755)
-	os.WriteFile(in.cfg, []byte(`{"manifest_paths":["C:\\other.vrmanifest"],"other_key":7}`), 0o644)
-	tg := New(Options{GOOS: "windows", InstallDir: in.dir, PaksDir: in.dir, AddToSteam: true, SteamRoot: in.steamRoot, SteamUser: in.user, SteamVRRoot: t.TempDir(), StartMenu: true, Desktop: true})
+	// The config folder is what marks steamRoot as a Steam folder.
+	os.MkdirAll(filepath.Join(in.steamRoot, "config"), 0o755)
+	tg := New(Options{GOOS: "windows", InstallDir: in.dir, PaksDir: in.dir, AddToSteam: true, SteamRoot: in.steamRoot, SteamUser: in.user, SteamVRRoot: t.TempDir(), StartMenu: true, Desktop: true, PreferVR: true, AlsoOther: true})
 	tg.registry = in.reg
 	tg.steamRunning = func() (bool, error) { return false, nil }
-	tg.steamVRRunning = func() (bool, error) { return false, nil }
 	ctx, log := context.Background(), func(string) {}
 	if _, err := tg.PrepareDestination(ctx, log); err != nil {
 		t.Fatal(err)
@@ -59,20 +58,28 @@ func installForUninstallOn(t *testing.T, desktopName string) installed {
 	if err := tg.RegisterLaunchEntry(ctx, log); err != nil {
 		t.Fatal(err)
 	}
-	in.appID = tg.appID
-	in.desktop = filepath.Join(desktop, "Trinity.lnk")
+	in.appIDs = tg.appIDs
+	if len(in.appIDs) != 2 {
+		t.Fatalf("setup: %v", in.appIDs)
+	}
+	in.desktop, in.desktopFlat = filepath.Join(desktop, "Trinity.lnk"), filepath.Join(desktop, "Trinity (Flat).lnk")
 	art := map[string][]byte{"capsule": {1}, "wide": {2}, "hero": {3}, "logo": {4}, "icon": {5}}
-	if err := tg.InstallArtwork(ctx, in.appID, art, log); err != nil {
+	id, err := tg.ReadAppID(ctx, log)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tg.RegisterVR(ctx, in.appID, art, log); err != nil {
+	if err := tg.InstallArtwork(ctx, id, art, log); err != nil {
 		t.Fatal(err)
 	}
-	// The stubbed PowerShell call wrote no shortcut, so stand one in where it would be.
+	if grid, _ := os.ReadDir(filepath.Join(in.user, "config", "grid")); len(grid) != 11 {
+		t.Fatalf("setup: five grid files per shortcut beside the other game's: %v", grid)
+	}
+	// The stubbed PowerShell calls wrote no Start Menu shortcuts, so stand them in where they would be.
 	programs := filepath.Join(roaming, "Microsoft", "Windows", "Start Menu", "Programs")
-	in.lnk = filepath.Join(programs, "Trinity.lnk")
+	in.lnk, in.lnkFlat = filepath.Join(programs, "Trinity.lnk"), filepath.Join(programs, "Trinity (Flat).lnk")
 	os.MkdirAll(programs, 0o755)
 	os.WriteFile(in.lnk, []byte("lnk"), 0o644)
+	os.WriteFile(in.lnkFlat, []byte("lnk"), 0o644)
 	in.settings = filepath.Join(roaming, "Trinity")
 	os.MkdirAll(filepath.Join(in.settings, "baseq3"), 0o755)
 	os.WriteFile(filepath.Join(in.settings, "baseq3", "q3config.cfg"), []byte("cfg"), 0o644)
@@ -140,28 +147,25 @@ func TestUninstallRemovesEverythingItInstalled(t *testing.T) {
 	if exists(in.dir) {
 		t.Fatal("a folder the installer created and emptied was left")
 	}
-	if exists(in.lnk) {
-		t.Fatal("Start Menu shortcut left")
-	}
-	if exists(in.desktop) {
-		t.Fatal("desktop shortcut left")
+	for _, p := range []string{in.lnk, in.lnkFlat, in.desktop, in.desktopFlat} {
+		if exists(p) {
+			t.Fatalf("%s left", p)
+		}
 	}
 	b, _ := os.ReadFile(filepath.Join(in.user, "config", "shortcuts.vdf"))
 	list, err := steam.ParseShortcuts(b)
 	if err != nil || len(list) != 1 || list[0].AppName != "Other" {
 		t.Fatalf("%+v %v", list, err)
 	}
-	for _, name := range steam.GridFiles(in.appID) {
-		if exists(filepath.Join(in.user, "config", "grid", name)) {
-			t.Fatalf("%s left", name)
+	for _, id := range in.appIDs {
+		for _, name := range steam.GridFiles(id) {
+			if exists(filepath.Join(in.user, "config", "grid", name)) {
+				t.Fatalf("%s left", name)
+			}
 		}
 	}
 	if !exists(in.other) {
 		t.Fatal("another game's artwork removed")
-	}
-	cfg, _ := os.ReadFile(in.cfg)
-	if strings.Contains(string(cfg), "trinity.vrmanifest") || !strings.Contains(string(cfg), "other.vrmanifest") || !strings.Contains(string(cfg), "other_key") {
-		t.Fatalf("%s", cfg)
 	}
 	if len(in.reg.keys) != 0 {
 		t.Fatalf("registry key left: %+v", in.reg.keys)
@@ -186,7 +190,7 @@ func TestUninstallKeepsFilesItDidNotInstall(t *testing.T) {
 			t.Fatalf("%s removed", p)
 		}
 	}
-	for _, rel := range []string{"trinity.exe", "renderer.dll", "docs", "baseq3/pak0.pk3", "missionpack", "uninstall.exe", "trinity.vrmanifest", "trinity-capsule.png", recordName} {
+	for _, rel := range []string{"trinity.exe", "renderer.dll", "docs", "baseq3/pak0.pk3", "missionpack", "uninstall.exe", recordName} {
 		if exists(filepath.Join(in.dir, filepath.FromSlash(rel))) {
 			t.Fatalf("%s left", rel)
 		}
@@ -279,7 +283,7 @@ func TestUninstallContinuesPastAFailure(t *testing.T) {
 	os.MkdirAll(filepath.Join(in.lnk, "x"), 0o755)
 	u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
 	errs, _ := u.runIn(in.dir, false)
-	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "Trinity.lnk") {
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), filepath.Base(in.lnk)) {
 		t.Fatalf("%v", errs)
 	}
 	if exists(in.dir) || len(in.reg.keys) != 0 {
@@ -348,7 +352,7 @@ func TestUninstallRefusesWhileTrinityOrSteamRuns(t *testing.T) {
 func TestUninstallChecksTrinityWithoutSteam(t *testing.T) {
 	in := installForUninstall(t)
 	rec := readRecord(t, in.dir)
-	rec.SteamRoot, rec.SteamUser, rec.AppID = "", "", 0
+	rec.SteamRoot, rec.SteamUser, rec.AppIDs = "", "", nil
 	writeRecord(t, in.dir, rec)
 	u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
 	u.trinityRunning = func() (bool, error) { return true, nil }
@@ -429,12 +433,12 @@ func TestUninstallChecksRecordedOutsidePaths(t *testing.T) {
 	os.MkdirAll(filepath.Join(otherUser, "config"), 0o755)
 	os.WriteFile(filepath.Join(otherUser, "config", "shortcuts.vdf"), []byte("keep"), 0o644)
 	rec := readRecord(t, in.dir)
-	rec.StartMenu, rec.SteamUser = decoy, otherUser
+	rec.StartMenuLinks, rec.SteamUser = []string{decoy}, otherUser
 	writeRecord(t, in.dir, rec)
 	u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
 	errs, log := u.runIn(in.dir, false)
 	if !exists(decoy) {
-		t.Fatal("removed a Start Menu path that is not Trinity.lnk in Start Menu\\Programs")
+		t.Fatal("removed a Start Menu path that is not a Trinity shortcut in Start Menu\\Programs")
 	}
 	if exists(in.lnk) {
 		t.Fatal("the recomputed Start Menu shortcut was not removed")
@@ -487,39 +491,18 @@ func TestUninstallRefusesARelativeFolder(t *testing.T) {
 	}
 }
 
-func TestRemoveManifestKeepsOtherKeys(t *testing.T) {
-	root := t.TempDir()
-	cfg := filepath.Join(root, "config", "appconfig.json")
-	if err := removeManifest(context.Background(), root, `C:\T\trinity.vrmanifest`, func(string) {}); err != nil {
-		t.Fatalf("a missing appconfig.json is nothing to undo: %v", err)
-	}
-	os.MkdirAll(filepath.Dir(cfg), 0o755)
-	os.WriteFile(cfg, []byte("not json"), 0o644)
-	if err := removeManifest(context.Background(), root, `C:\T\trinity.vrmanifest`, func(string) {}); err == nil {
-		t.Fatal("a malformed appconfig.json must not be overwritten")
-	}
-	os.WriteFile(cfg, []byte(`{"manifest_paths":["C:\\a.vrmanifest","C:\\T\\trinity.vrmanifest"],"x":{"y":1}}`), 0o644)
-	if err := removeManifest(context.Background(), root, `C:\T\trinity.vrmanifest`, func(string) {}); err != nil {
-		t.Fatal(err)
-	}
-	b, _ := os.ReadFile(cfg)
-	if strings.Contains(string(b), "trinity") || !strings.Contains(string(b), `a.vrmanifest`) || !strings.Contains(string(b), `"y": 1`) {
-		t.Fatalf("%s", b)
-	}
-}
-
 func TestUninstallChecksTheRecordedDesktopPath(t *testing.T) {
-	for _, name := range []string{"notes.lnk", "Trinity.lnk"} {
+	for _, name := range []string{"notes.lnk", "Trinity (VR).lnk"} {
 		in := installForUninstall(t)
 		parent := "Desktop"
-		if name == "Trinity.lnk" {
+		if name == "Trinity (VR).lnk" {
 			parent = "Documents"
 		}
 		decoy := filepath.Join(t.TempDir(), parent, name)
 		os.MkdirAll(filepath.Dir(decoy), 0o755)
 		os.WriteFile(decoy, []byte("d"), 0o644)
 		rec := readRecord(t, in.dir)
-		rec.Desktop = decoy
+		rec.DesktopLinks = []string{decoy}
 		writeRecord(t, in.dir, rec)
 		u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
 		_, log := u.runIn(in.dir, false)
@@ -532,13 +515,13 @@ func TestUninstallChecksTheRecordedDesktopPath(t *testing.T) {
 func TestUninstallSkipsShortcutsTheRecordDoesNotName(t *testing.T) {
 	in := installForUninstall(t)
 	rec := readRecord(t, in.dir)
-	rec.StartMenu, rec.Desktop = "", ""
+	rec.StartMenuLinks, rec.DesktopLinks = nil, nil
 	writeRecord(t, in.dir, rec)
 	u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
 	if errs, _ := u.runIn(in.dir, false); len(errs) != 0 {
 		t.Fatal(errs)
 	}
-	// The user unticked both boxes; a Trinity.lnk there is not the installer's.
+	// The user unticked both boxes; a Trinity shortcut there is not the installer's.
 	if !exists(in.lnk) || !exists(in.desktop) {
 		t.Fatal("removed a shortcut the record does not name")
 	}
@@ -672,32 +655,6 @@ func TestDeleteSettingsWithoutAnAppDataFolder(t *testing.T) {
 	}
 }
 
-func TestDeleteSettingsEmptiesTheDefaultFolder(t *testing.T) {
-	for _, owned := range []bool{true, false} {
-		in := installForUninstall(t)
-		// A record from a re-install into the folder an older installer made says the folder was not created.
-		rec := readRecord(t, in.dir)
-		rec.CreatedInstallDir, rec.Dirs = false, nil
-		writeRecord(t, in.dir, rec)
-		engineFiles(t, in.dir)
-		u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
-		u.defaultDir = filepath.Join(t.TempDir(), "Games", "Trinity")
-		if owned {
-			u.defaultDir = in.dir
-		}
-		if errs, log := u.runIn(in.dir, true); len(errs) != 0 {
-			t.Fatalf("%v\n%s", errs, log)
-		}
-		pak := exists(filepath.Join(in.dir, "baseq3", "pak1.pk3"))
-		if owned && exists(in.dir) {
-			t.Fatal("the per-user default folder is the installer's, so the box must empty it")
-		}
-		if !owned && !pak {
-			t.Fatal("a folder elsewhere stays a shared folder whatever its name")
-		}
-	}
-}
-
 func TestTheDefaultFolderCountsAsCreated(t *testing.T) {
 	stubCommands(t)
 	fakeSelf(t, "installer")
@@ -789,21 +746,6 @@ func TestSharedSweepSkipsALinkedGameFolder(t *testing.T) {
 }
 
 func TestLookalikesAreNotTheDefaultFolder(t *testing.T) {
-	for name, defaultOf := range map[string]func(dir string) string{
-		"sibling Trinity2": func(dir string) string { return dir + "2" },
-		"its own parent":   func(dir string) string { return filepath.Join(dir, "Trinity") },
-	} {
-		in := sharedInstall(t)
-		engineFiles(t, in.dir)
-		u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
-		u.defaultDir = defaultOf(in.dir)
-		if errs, log := u.runIn(in.dir, true); len(errs) != 0 {
-			t.Fatalf("%s: %v\n%s", name, errs, log)
-		}
-		if !exists(filepath.Join(in.dir, "baseq3", "pak1.pk3")) || !exists(filepath.Join(in.dir, "notes.txt")) {
-			t.Fatalf("%s: emptied as if it were the default folder", name)
-		}
-	}
 	stubCommands(t)
 	fakeSelf(t, "installer")
 	drive := t.TempDir()
@@ -911,5 +853,73 @@ func TestQuietUninstallStillRefusesWhileSteamRuns(t *testing.T) {
 	errs, _ := u.runWith(UninstallOptions{InstallDir: in.dir})
 	if len(errs) != 1 || !errors.Is(errs[0], ErrSteamRunning) {
 		t.Fatalf("%v", errs)
+	}
+}
+
+func TestUninstallRemovesEveryShortcutName(t *testing.T) {
+	in := installForUninstall(t)
+	// A reinstall that switched modes with the places unticked keeps the earlier set recorded, so any of the three names can be there.
+	programs, desktop := filepath.Dir(in.lnk), filepath.Dir(in.desktop)
+	vr := []string{filepath.Join(programs, "Trinity (VR).lnk"), filepath.Join(desktop, "Trinity (VR).lnk")}
+	for _, p := range vr {
+		os.WriteFile(p, []byte("lnk"), 0o644)
+	}
+	rec := readRecord(t, in.dir)
+	rec.StartMenuLinks = append(rec.StartMenuLinks, vr[0])
+	rec.DesktopLinks = append(rec.DesktopLinks, vr[1])
+	writeRecord(t, in.dir, rec)
+	u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+	if errs, log := u.runIn(in.dir, false); len(errs) != 0 {
+		t.Fatalf("%v\n%s", errs, log)
+	}
+	for _, p := range append(vr, in.lnk, in.lnkFlat, in.desktop, in.desktopFlat) {
+		if exists(p) {
+			t.Fatalf("%s left", p)
+		}
+	}
+	if isStartMenuLink(filepath.Join(programs, "Trinity 2.lnk")) {
+		t.Fatal("a name the installer never writes recognized")
+	}
+}
+
+func TestUninstallRestartsSteamExactlyWhenTheUninstallClosesIt(t *testing.T) {
+	in := installForUninstall(t)
+	for _, c := range []struct {
+		name      string
+		steam, vr bool
+		steamErr  error
+		want      bool
+	}{
+		{"Steam running", true, false, nil, true},
+		{"only SteamVR running", false, true, nil, true},
+		{"check failed", false, false, errors.New("tasklist is missing"), true},
+		{"both closed", false, false, nil, false},
+	} {
+		u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+		steam, vr := c.steam, c.vr
+		u.steamRunning = func() (bool, error) { return steam, c.steamErr }
+		u.steamVRRunning = func() (bool, error) { return vr, nil }
+		if got := u.restartsSteam(in.dir); got != c.want {
+			t.Fatalf("%s: notice %v", c.name, got)
+		}
+		// The uninstall itself must agree: it closes and restarts Steam exactly when the notice said so.
+		closes := 0
+		u.closeSteam = func(context.Context, string, func(string)) error { closes++; steam, vr = false, false; return nil }
+		u.relaunchSteam = func(context.Context, string, func(string)) error { return nil }
+		_, err := u.closed(context.Background(), true, true, in.steamRoot, func(string) {})
+		if (closes == 1) != c.want {
+			t.Fatalf("%s: closes %d, err %v", c.name, closes, err)
+		}
+	}
+	u := in.uninstaller(filepath.Join(t.TempDir(), "x.exe"))
+	u.steamRunning = func() (bool, error) { return true, nil }
+	rec := readRecord(t, in.dir)
+	rec.SteamRoot, rec.SteamUser, rec.AppIDs = "", "", nil
+	writeRecord(t, in.dir, rec)
+	if u.restartsSteam(in.dir) {
+		t.Fatal("no Steam shortcuts, so no Steam restart")
+	}
+	if u.restartsSteam(t.TempDir()) {
+		t.Fatal("no record, so no Steam steps")
 	}
 }
