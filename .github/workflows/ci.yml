@@ -5,10 +5,10 @@ on:
   pull_request:
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.27'
       - name: Fyne build dependencies
@@ -21,16 +21,16 @@ jobs:
     runs-on: windows-latest
     defaults: { run: { shell: 'msys2 {0}' } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.27'
       # MSYS2 supplies only gcc for cgo; inherit keeps setup-go's Go on the path.
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           path-type: inherit
-          install: mingw-w64-x86_64-gcc
+          install: mingw-w64-ucrt-x86_64-gcc
       - name: Bundle adb
         run: go run ./tools/fetchadb -out internal/adb/bin
       - run: go vet ./...

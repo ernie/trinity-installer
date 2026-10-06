@@ -6,10 +6,10 @@ permissions:
   contents: write
 jobs:
   linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with: { go-version: '1.27' }
       - run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev libxkbcommon-dev libwayland-dev
       - name: Bundle adb
@@ -17,21 +17,21 @@ jobs:
       - run: go test ./...
       - run: go build -ldflags "-X main.version=${GITHUB_REF_NAME}" -o trinity-installer ./cmd/trinity-installer
       - run: tar czf trinity-installer-linux-x86_64.tar.gz trinity-installer
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: linux, path: trinity-installer-linux-x86_64.tar.gz }
   windows:
     runs-on: windows-latest
     defaults: { run: { shell: 'msys2 {0}' } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with: { go-version: '1.27' }
       # MSYS2 supplies only gcc for cgo; inherit keeps setup-go's Go on the path.
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           path-type: inherit
-          install: mingw-w64-x86_64-gcc
+          install: mingw-w64-ucrt-x86_64-gcc
       - run: go install fyne.io/tools/cmd/fyne@v1.7.3
       - name: Bundle adb
         run: go run ./tools/fetchadb -out internal/adb/bin
@@ -45,14 +45,14 @@ jobs:
           go run ./tools/winres -version ${GITHUB_REF_NAME#v}
           "$(cygpath -u "$(go env GOPATH)")/bin/fyne" build -release -src ./cmd/trinity-installer -o "$PWD/trinity-installer-windows-x86_64.exe"
           [ -f trinity-installer-windows-x86_64.exe ] || { echo "trinity-installer-windows-x86_64.exe not built" >&2; exit 1; }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: windows, path: trinity-installer-windows-x86_64.exe }
   macos:
     runs-on: macos-latest
     environment: release
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with: { go-version: '1.27' }
       - run: go install fyne.io/tools/cmd/fyne@v1.7.3
       - name: Bundle adb
@@ -86,15 +86,15 @@ jobs:
           chmod +x scripts/macos-codesign.sh
           ./scripts/macos-codesign.sh "Trinity Installer.app"
       - run: ditto -c -k --keepParent "Trinity Installer.app" trinity-installer-macos.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: macos, path: trinity-installer-macos.zip }
   release:
     needs: [linux, windows, macos]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { merge-multiple: true }
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
             trinity-installer-linux-x86_64.tar.gz
