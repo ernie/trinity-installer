@@ -35,7 +35,7 @@ jobs:
       - name: Package
         env:
           GOFLAGS: -ldflags=-X=main.version=${{ github.ref_name }}
-        run: '"$(go env GOPATH)/bin/fyne" package -os windows -src ./cmd/trinity-installer -icon "$PWD/assets/grid/icon.png" -name "Trinity Installer" -release -app-version ${GITHUB_REF_NAME#v}'
+        run: '"$(go env GOPATH)/bin/fyne" package -os windows -src ./cmd/trinity-installer -icon "$PWD/assets/grid/icon.png" -name "Trinity Installer" -app-id run.trinity.installer -release -app-version ${GITHUB_REF_NAME#v}'
       - run: |
           set -e
           exe=$(find . -name 'Trinity Installer.exe' -print -quit)
@@ -54,7 +54,7 @@ jobs:
         run: go run ./tools/fetchadb -out internal/adb/bin
       - run: go test ./...
       - run: go build -ldflags "-X main.version=${GITHUB_REF_NAME}" -o trinity-installer ./cmd/trinity-installer
-      - run: '"$(go env GOPATH)/bin/fyne" package -os darwin -executable trinity-installer -icon assets/grid/icon.png -name "Trinity Installer" -release -app-version ${GITHUB_REF_NAME#v}'
+      - run: '"$(go env GOPATH)/bin/fyne" package -os darwin -executable trinity-installer -icon assets/grid/icon.png -name "Trinity Installer" -app-id run.trinity.installer -release -app-version ${GITHUB_REF_NAME#v}'
       - name: Sign and notarize
         env:
           MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
