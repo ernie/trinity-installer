@@ -50,6 +50,7 @@ func (u *ui) showDevice() {
 	u.device = adb.Device{}
 	u.deviceStatus = widget.NewLabel("Connect the Quest or PICO with a USB cable. It needs developer mode on.")
 	u.deviceStatus.Wrapping = fyne.TextWrapWord
+	u.deviceGrants = wrapped("Trinity will be allowed to use the headset's storage, microphone and eye tracking. You can change that in the headset's settings.")
 	u.deviceNext = widget.NewButton("Next", nil)
 	u.deviceNext.Disable()
 	u.deviceList = widget.NewList(
@@ -71,7 +72,7 @@ func (u *ui) showDevice() {
 		cancel()
 		u.showTarget()
 	})
-	u.show(container.NewBorder(u.deviceStatus, buttonRow(back, u.deviceNext), nil, nil, u.deviceList))
+	u.show(container.NewBorder(u.deviceStatus, container.NewVBox(u.deviceGrants, buttonRow(back, u.deviceNext)), nil, nil, u.deviceList))
 	a := u.adb
 	watchDevices(ctx, func() {
 		got, devs, err := u.fetchDevices(ctx, a)

@@ -128,7 +128,8 @@ func ParseDevices(out string) []Device {
 }
 
 func (a *ADB) Install(ctx context.Context, serial, apk string) error {
-	_, err := a.run(ctx, serial, "install", "-r", apk)
+	// -g grants the storage, microphone and eye tracking permissions up front, so the game never stops to ask in the headset.
+	_, err := a.run(ctx, serial, "install", "-r", "-g", apk)
 	return err
 }
 

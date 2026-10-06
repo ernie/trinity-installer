@@ -46,7 +46,7 @@ func TestCommandsUseSerial(t *testing.T) {
 			t.Fatalf("%v", c)
 		}
 	}
-	if strings.Join(got[0][3:], " ") != "install -r /tmp/t.apk" || got[2][3] != "shell" {
+	if strings.Join(got[0][3:], " ") != "install -r -g /tmp/t.apk" || got[2][3] != "shell" {
 		t.Fatalf("%v", got)
 	}
 }

@@ -73,6 +73,7 @@ type ui struct {
 	deviceList                  *widget.List
 	deviceNext                  *widget.Button
 	deviceStatus                *widget.Label
+	deviceGrants                *widget.Label
 	eulaScroll                  *container.Scroll
 	eulaAgree                   *widget.Check
 	eulaNext                    *widget.Button

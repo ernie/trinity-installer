@@ -370,6 +370,21 @@ func TestDeviceScreenBlocksUnauthorized(t *testing.T) {
 	}
 }
 
+func TestDeviceScreenSaysWhatTheGameMayUse(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	ui := newUI(a, a.NewWindow("t"), t.TempDir())
+	t.Cleanup(func() { ui.logFile.Close() })
+	old := listDevices
+	listDevices = func(context.Context) ([]adb.Device, error) { return nil, nil }
+	defer func() { listDevices = old }()
+	ui.showDevice()
+	want := "Trinity will be allowed to use the headset's storage, microphone and eye tracking. You can change that in the headset's settings."
+	if ui.deviceGrants == nil || ui.deviceGrants.Text != want || !ui.deviceGrants.Visible() {
+		t.Fatalf("grants note missing or wrong: %+v", ui.deviceGrants)
+	}
+}
+
 func TestDeviceSelectionFollowsRefresh(t *testing.T) {
 	a := test.NewApp()
 	defer a.Quit()

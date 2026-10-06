@@ -14,7 +14,7 @@ import (
 
 var _ target.Target = (*Target)(nil)
 
-// fake records each adb argv; devices answers "devices -l", installed keeps what install -r was handed.
+// fake records each adb argv; devices answers "devices -l", installed keeps what install -r -g was handed.
 type fake struct {
 	argv       []string
 	devices    string
@@ -26,8 +26,8 @@ type fake struct {
 func (f *fake) adb() *adb.ADB {
 	return adb.Fake(func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		f.argv = append(f.argv, strings.Join(args, " "))
-		if len(args) == 5 && args[2] == "install" {
-			b, err := os.ReadFile(args[4])
+		if len(args) == 6 && args[2] == "install" {
+			b, err := os.ReadFile(args[5])
 			if err != nil {
 				return nil, err
 			}
@@ -71,10 +71,10 @@ func TestPushPackageInstallsTheAPK(t *testing.T) {
 	if err := New(f.adb(), quest).PushPackage(context.Background(), pkg, func(string) {}); err != nil {
 		t.Fatal(err)
 	}
-	if f.installed != "apk bytes" || !strings.HasPrefix(f.argv[0], "-s 2G0YC1ZF8M0ABC install -r ") {
+	if f.installed != "apk bytes" || !strings.HasPrefix(f.argv[0], "-s 2G0YC1ZF8M0ABC install -r -g ") {
 		t.Fatalf("%q %q", f.installed, f.argv)
 	}
-	if tmp := strings.Fields(f.argv[0])[4]; !strings.HasSuffix(tmp, ".apk") {
+	if tmp := strings.Fields(f.argv[0])[5]; !strings.HasSuffix(tmp, ".apk") {
 		t.Fatalf("adb install wants an .apk name: %s", tmp)
 	} else if _, err := os.Stat(tmp); err == nil {
 		t.Fatalf("temp file %s left behind", tmp)
