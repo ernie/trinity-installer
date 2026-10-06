@@ -29,5 +29,8 @@ func main() {
 	u := newUI(a, w, configDir())
 	u.goos = runtime.GOOS
 	u.start(uninstall)
+	// These two lines show in install.log how the process ended.
+	w.SetOnClosed(func() { u.logf("window closed") })
 	w.ShowAndRun()
+	u.logf("exiting")
 }
