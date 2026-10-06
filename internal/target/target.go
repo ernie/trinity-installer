@@ -21,7 +21,7 @@ const (
 	InstallArtwork
 )
 
-var Names = [...]string{"Fetch release", "Prepare destination", "Push package", "Push retail paks", "Push 1.32 patch", "Register launch entry", "Read app id", "Register with VR runtime", "Install artwork"}
+var Names = [...]string{"Fetch release", "Prepare destination", "Copy package", "Copy retail paks", "Copy 1.32 patch", "Register launch entry", "Read app id", "Register with VR runtime", "Install artwork"}
 
 func (s Step) String() string { return Names[s] }
 

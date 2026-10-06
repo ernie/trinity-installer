@@ -82,7 +82,7 @@ func pushAll(ctx context.Context, s store.Store, dir string, items []pending, on
 			return fmt.Errorf("%s: %w", p.rel, err)
 		}
 		onPut(p.rel)
-		log(fmt.Sprintf("pushed %s (%d MB)", p.rel, p.size>>20))
+		log(fmt.Sprintf("copied %s (%d MB)", p.rel, p.size>>20))
 	}
 	return nil
 }
@@ -127,7 +127,7 @@ func (p *progressReader) Read(b []byte) (int, error) {
 	p.done += int64(n)
 	if p.done-p.last >= 16<<20 {
 		p.last = p.done
-		p.log(fmt.Sprintf("pushed %d of %d MB of %s", p.done>>20, p.total>>20, p.name))
+		p.log(fmt.Sprintf("copied %d of %d MB of %s", p.done>>20, p.total>>20, p.name))
 	}
 	return n, err
 }

@@ -439,7 +439,7 @@ func TestInstallRowsFollowThePlan(t *testing.T) {
 	}
 	defer func() { runInstall = old }()
 	ui.showInstall()
-	if len(ui.rows) != 5 || !strings.Contains(ui.rows[4], "Push 1.32 patch") {
+	if len(ui.rows) != 5 || !strings.Contains(ui.rows[4], "Copy 1.32 patch") {
 		t.Fatalf("%d rows", len(ui.rows))
 	}
 }
@@ -1047,7 +1047,7 @@ func TestInstallShowsTheFailureUnderTheSteps(t *testing.T) {
 	}
 	defer func() { runInstall = old }()
 	ui.showInstall()
-	if !ui.installFailure.Visible() || ui.installFailure.Text != "Push package: disk full while writing" {
+	if !ui.installFailure.Visible() || ui.installFailure.Text != "Copy package: disk full while writing" {
 		t.Fatalf("%v %q", ui.installFailure.Visible(), ui.installFailure.Text)
 	}
 }

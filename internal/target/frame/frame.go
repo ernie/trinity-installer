@@ -111,7 +111,7 @@ func (t *Target) PushPackage(ctx context.Context, pkg *release.Package, log func
 		if err != nil {
 			return fmt.Errorf("%s: %w", e.Rel, err)
 		}
-		log("pushed " + e.Rel)
+		log("copied " + e.Rel)
 	}
 	return nil
 }
