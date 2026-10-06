@@ -6,6 +6,8 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+
+	"github.com/ernie/trinity-installer/assets/grid"
 )
 
 var version = ""
@@ -24,6 +26,8 @@ func main() {
 		os.Exit(quietUninstall(configDir()))
 	}
 	a := app.NewWithID("run.trinity.installer")
+	// fyne package used to set this from its metadata; the Windows release now builds without it.
+	a.SetIcon(fyne.NewStaticResource("icon.png", grid.Icon))
 	w := a.NewWindow(versionString(version))
 	w.Resize(fyne.NewSize(460+panelSize.Width, panelSize.Height))
 	u := newUI(a, w, configDir())

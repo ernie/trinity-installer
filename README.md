@@ -38,9 +38,10 @@ The installer bundles `adb` from Android platform-tools under the Apache 2.0 lic
 
 The toolchain is Go 1.27, pinned in `mise.toml`; `mise install` fetches it. go.mod also names the toolchain, so an older `go` on the path downloads it on first use.
 
-The release workflow packages the Windows build with `fyne package`, which hides the console. A plain `go build` shows one; build the Windows exe with:
+The release workflow builds Windows with `fyne build -release`, after `tools/winres` writes the icon, manifest and version resources. A plain `go build` shows a console window; build the Windows exe with:
 
 ```
 go run ./tools/fetchadb -out internal/adb/bin
+go run ./tools/winres
 go build -ldflags "-H windowsgui -X main.version=dev" -o build/trinity-installer.exe ./cmd/trinity-installer
 ```

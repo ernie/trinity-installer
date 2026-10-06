@@ -39,12 +39,12 @@ jobs:
       - name: Package
         env:
           GOFLAGS: -ldflags=-X=main.version=${{ github.ref_name }}
-        run: '"$(cygpath -u "$(go env GOPATH)")/bin/fyne" package -os windows -src ./cmd/trinity-installer -icon "$PWD/assets/grid/icon.png" -name "Trinity Installer" -app-id run.trinity.installer -release -app-version ${GITHUB_REF_NAME#v}'
-      - run: |
+        # fyne package would flatten the multi-size icon to one image, so winres writes the resources and fyne build links them.
+        run: |
           set -e
-          exe=$(find . -name 'Trinity Installer.exe' -print -quit)
-          [ -n "$exe" ] || { echo "Trinity Installer.exe not found" >&2; exit 1; }
-          mv "$exe" trinity-installer-windows-x86_64.exe
+          go run ./tools/winres -version ${GITHUB_REF_NAME#v}
+          "$(cygpath -u "$(go env GOPATH)")/bin/fyne" build -release -src ./cmd/trinity-installer -o "$PWD/trinity-installer-windows-x86_64.exe"
+          [ -f trinity-installer-windows-x86_64.exe ] || { echo "trinity-installer-windows-x86_64.exe not built" >&2; exit 1; }
       - uses: actions/upload-artifact@v4
         with: { name: windows, path: trinity-installer-windows-x86_64.exe }
   macos:

@@ -6,6 +6,7 @@ toolchain go1.27.1
 
 require (
 	fyne.io/fyne/v2 v2.8.1
+	github.com/josephspurrier/goversioninfo v1.7.0
 	github.com/libp2p/zeroconf/v2 v2.2.0
 	github.com/ncruces/zenity v0.10.15
 	github.com/pkg/sftp v1.13.11
@@ -35,7 +36,6 @@ require (
 	github.com/hack-pad/go-indexeddb v0.3.2 // indirect
 	github.com/hack-pad/safejs v0.1.0 // indirect
 	github.com/jeandeaual/go-locale v0.0.0-20250612000132-0ef82f21eade // indirect
-	github.com/josephspurrier/goversioninfo v1.7.0 // indirect
 	github.com/jsummers/gobmp v0.0.0-20230614200233-a9de23ed2e25 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
