@@ -24,10 +24,14 @@ jobs:
     defaults: { run: { shell: 'msys2 {0}' } }
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.27' }
+      # MSYS2 supplies only gcc for cgo; inherit keeps setup-go's Go on the path.
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
-          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-go
+          path-type: inherit
+          install: mingw-w64-x86_64-gcc
       - run: go install fyne.io/tools/cmd/fyne@v1.7.3
       - name: Bundle adb
         run: go run ./tools/fetchadb -out internal/adb/bin
@@ -35,7 +39,7 @@ jobs:
       - name: Package
         env:
           GOFLAGS: -ldflags=-X=main.version=${{ github.ref_name }}
-        run: '"$(go env GOPATH)/bin/fyne" package -os windows -src ./cmd/trinity-installer -icon "$PWD/assets/grid/icon.png" -name "Trinity Installer" -app-id run.trinity.installer -release -app-version ${GITHUB_REF_NAME#v}'
+        run: '"$(cygpath -u "$(go env GOPATH)")/bin/fyne" package -os windows -src ./cmd/trinity-installer -icon "$PWD/assets/grid/icon.png" -name "Trinity Installer" -app-id run.trinity.installer -release -app-version ${GITHUB_REF_NAME#v}'
       - run: |
           set -e
           exe=$(find . -name 'Trinity Installer.exe' -print -quit)
@@ -45,6 +49,7 @@ jobs:
         with: { name: windows, path: trinity-installer-windows-x86_64.exe }
   macos:
     runs-on: macos-latest
+    environment: release
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
