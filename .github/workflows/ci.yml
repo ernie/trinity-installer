@@ -17,3 +17,21 @@ jobs:
         run: go run ./tools/fetchadb -out internal/adb/bin
       - run: go vet ./...
       - run: go test ./...
+  windows:
+    runs-on: windows-latest
+    defaults: { run: { shell: 'msys2 {0}' } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+      # MSYS2 supplies only gcc for cgo; inherit keeps setup-go's Go on the path.
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          path-type: inherit
+          install: mingw-w64-x86_64-gcc
+      - name: Bundle adb
+        run: go run ./tools/fetchadb -out internal/adb/bin
+      - run: go vet ./...
+      - run: go test ./...
