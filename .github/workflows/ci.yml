@@ -12,7 +12,7 @@ jobs:
         with:
           go-version: '1.27'
       - name: Fyne build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev libxkbcommon-dev
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev libxkbcommon-dev libwayland-dev
       - name: Bundle adb
         run: go run ./tools/fetchadb -out internal/adb/bin
       - run: go vet ./...
