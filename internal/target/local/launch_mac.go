@@ -34,11 +34,18 @@ func (t *Target) installDMG(ctx context.Context, raw []byte, log func(string)) e
 		}
 	}()
 	// Copy beside the old app and swap, so a failed copy leaves the previous install working.
+	// The copy goes to a hidden folder under its final name: the Dock caches a half-copied Trinity.app.part as a plain folder and keeps it one after the rename.
 	dst := filepath.Join(t.opts.InstallDir, "Trinity.app")
-	staged := dst + ".part"
-	os.RemoveAll(staged)
+	if err := os.MkdirAll(t.opts.InstallDir, 0o755); err != nil {
+		return err
+	}
+	stage, err := os.MkdirTemp(t.opts.InstallDir, ".trinity-install-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(stage)
+	staged := filepath.Join(stage, "Trinity.app")
 	if out, err := runCommand(ctx, "ditto", filepath.Join(mount, "Trinity.app"), staged); err != nil {
-		os.RemoveAll(staged)
 		return fmt.Errorf("copying Trinity.app: %w: %s", err, out)
 	}
 	if err := os.RemoveAll(dst); err != nil {

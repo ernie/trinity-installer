@@ -461,7 +461,9 @@ func TestInstallDMGCommands(t *testing.T) {
 		t.Fatalf("attach %v", attach)
 	}
 	mount := attach[5]
-	if len(ditto) != 3 || ditto[0] != "ditto" || ditto[1] != filepath.Join(mount, "Trinity.app") || filepath.Dir(ditto[2]) != apps {
+	// The copy lands in a hidden folder under its final name: the Dock caches a half-copied Trinity.app.part as a plain folder.
+	if len(ditto) != 3 || ditto[0] != "ditto" || ditto[1] != filepath.Join(mount, "Trinity.app") || filepath.Base(ditto[2]) != "Trinity.app" ||
+		filepath.Dir(filepath.Dir(ditto[2])) != apps || !strings.HasPrefix(filepath.Base(filepath.Dir(ditto[2])), ".") {
 		t.Fatalf("ditto %v", ditto)
 	}
 	// Finder registers what it copies with LaunchServices and ditto does not; an unregistered bundle opens as a folder from the Dock.
@@ -476,6 +478,9 @@ func TestInstallDMGCommands(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(apps, "Trinity.app", "old")); err == nil {
 		t.Fatal("the previous Trinity.app was not replaced")
+	}
+	if entries, _ := os.ReadDir(apps); len(entries) != 1 {
+		t.Fatalf("staging left behind: %v", entries)
 	}
 }
 
@@ -497,6 +502,9 @@ func TestInstallDMGKeepsOldAppOnCopyFailure(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(apps, "Trinity.app", "old")); err != nil {
 		t.Fatal("the previous Trinity.app was removed before the copy succeeded")
+	}
+	if entries, _ := os.ReadDir(apps); len(entries) != 1 {
+		t.Fatalf("staging left behind: %v", entries)
 	}
 }
 
