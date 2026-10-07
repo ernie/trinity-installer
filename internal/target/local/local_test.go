@@ -27,7 +27,7 @@ func TestDefaultsPerOS(t *testing.T) {
 		t.Fatalf("%+v", l)
 	}
 	m := Defaults("darwin", "arm64", "/Users/me", "")
-	if m.InstallDir != "/Users/me/Applications" || m.PaksDir != "/Users/me/Library/Application Support/Trinity" {
+	if m.InstallDir != "/Applications" || m.PaksDir != "/Users/me/Library/Application Support/Trinity" {
 		t.Fatalf("%+v", m)
 	}
 	// VR is the default exactly when SteamVR is installed, and the other mode's shortcuts come along.

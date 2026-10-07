@@ -20,7 +20,7 @@ Every target needs a retail Quake III Arena install with its pak0 files. If the 
 
 ## PC install
 
-The PC install goes to `C:\Games\Trinity` on Windows (no administrator rights needed; pick another folder on the Destination screen if you prefer), and under a per-user folder elsewhere: `~/.local/share/trinity` on Linux, and `~/Applications` plus `~/Library/Application Support/Trinity` on macOS.
+The PC install goes to `C:\Games\Trinity` on Windows (no administrator rights needed; pick another folder on the Destination screen if you prefer), `~/.local/share/trinity` on Linux, and `/Applications` on macOS, with the paks and settings in `~/Library/Application Support/Trinity`. Writing to `/Applications` needs an administrator account; pick `~/Applications` on the Destination screen otherwise.
 
 On Windows and Linux, the Destination screen asks how you want to play, VR or Flatscreen (VR is preselected when SteamVR is installed). Every place you tick, "Add to Start Menu" ("Add to applications menu" on Linux), "Add to Desktop" and "Add to Steam", gets a "Trinity" shortcut that starts in that mode, plus "Trinity (Flat)" or "Trinity (VR)" for the other mode unless you untick "Also create ... shortcuts". A shortcut sets the mode for that launch only; starting the game without one uses the mode last chosen in Trinity's menu.
 

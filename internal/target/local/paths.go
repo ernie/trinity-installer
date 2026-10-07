@@ -28,7 +28,8 @@ type Options struct {
 func Defaults(goos, goarch, home, systemDrive string) Options {
 	o := Options{GOOS: goos, GOARCH: goarch, StartMenu: goos != "darwin", Desktop: goos != "darwin", AlsoOther: true}
 	if goos == "darwin" {
-		o.InstallDir = joinFor(goos, home, "Applications")
+		// The system Applications folder, where a Finder drag puts apps and the Dock's Applications stack looks.
+		o.InstallDir = "/Applications"
 		o.PaksDir = joinFor(goos, home, "Library", "Application Support", "Trinity")
 	} else {
 		o.InstallDir = defaultInstallDir(goos, home, systemDrive)
