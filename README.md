@@ -38,6 +38,8 @@ The installer bundles `adb` from Android platform-tools under the Apache 2.0 lic
 
 The toolchain is Go 1.27, pinned in `mise.toml`; `mise install` fetches it. go.mod also names the toolchain, so an older `go` on the path downloads it on first use.
 
+The macOS release replaces the icon `fyne package` generates with `assets/trinity.icns`, a copy of the engine's `code/unix/trinity.icns`.
+
 The release workflow builds Windows with `fyne build -release`, after `tools/winres` writes the icon, manifest and version resources. A plain `go build` shows a console window; build the Windows exe with:
 
 ```

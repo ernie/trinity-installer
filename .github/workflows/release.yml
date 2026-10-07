@@ -60,6 +60,8 @@ jobs:
       - run: go test ./...
       - run: go build -ldflags "-X main.version=${GITHUB_REF_NAME}" -o trinity-installer ./cmd/trinity-installer
       - run: '"$(go env GOPATH)/bin/fyne" package -os darwin -executable trinity-installer -icon assets/grid/icon.png -name "Trinity Installer" -app-id run.trinity.installer -release -app-version ${GITHUB_REF_NAME#v}'
+      # fyne package builds icon.icns from one PNG; swap in the engine's tiled icon before signing seals Resources.
+      - run: cp assets/trinity.icns "Trinity Installer.app/Contents/Resources/icon.icns"
       - name: Sign and notarize
         env:
           MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
