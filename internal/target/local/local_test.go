@@ -435,6 +435,17 @@ func TestInstallDMGCommands(t *testing.T) {
 		return nil, nil
 	}
 	defer func() { runCommand = old }()
+	var registered []string
+	oldRegister := registerApp
+	registerApp = func(path string) error {
+		// Registered after the swap, so LaunchServices records the final path rather than the staged copy.
+		if _, err := os.Stat(filepath.Join(path, "old")); err == nil {
+			t.Error("registered before the new bundle replaced the old one")
+		}
+		registered = append(registered, path)
+		return nil
+	}
+	defer func() { registerApp = oldRegister }()
 	apps := t.TempDir()
 	os.MkdirAll(filepath.Join(apps, "Trinity.app", "old"), 0o755)
 	tg := New(Options{GOOS: "darwin", InstallDir: apps})
@@ -452,6 +463,10 @@ func TestInstallDMGCommands(t *testing.T) {
 	mount := attach[5]
 	if len(ditto) != 3 || ditto[0] != "ditto" || ditto[1] != filepath.Join(mount, "Trinity.app") || filepath.Dir(ditto[2]) != apps {
 		t.Fatalf("ditto %v", ditto)
+	}
+	// Finder registers what it copies with LaunchServices and ditto does not; an unregistered bundle opens as a folder from the Dock.
+	if len(registered) != 1 || registered[0] != filepath.Join(apps, "Trinity.app") {
+		t.Fatalf("registered %v", registered)
 	}
 	if strings.Join(detach, " ") != "hdiutil detach "+mount {
 		t.Fatalf("detach %v", detach)

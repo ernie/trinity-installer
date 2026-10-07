@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 )
 
+// registerApp is a variable so tests record the registration instead of touching LaunchServices.
+var registerApp = lsRegister
+
 func (t *Target) installDMG(ctx context.Context, raw []byte, log func(string)) error {
 	tmp, err := os.MkdirTemp("", "trinity-dmg")
 	if err != nil {
@@ -43,6 +46,10 @@ func (t *Target) installDMG(ctx context.Context, raw []byte, log func(string)) e
 	}
 	if err := os.Rename(staged, dst); err != nil {
 		return err
+	}
+	// Finder registers what it copies with LaunchServices and ditto does not; until then the Dock opens the bundle as a folder.
+	if err := registerApp(dst); err != nil {
+		log(fmt.Sprintf("could not register %s with LaunchServices: %v", dst, err))
 	}
 	log("installed " + dst)
 	return nil
