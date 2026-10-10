@@ -10,10 +10,7 @@ const (
 	KindAPK
 )
 
-const (
-	EngineAPI     = "https://api.github.com/repos/ernie/trinity-engine/releases/latest"
-	StandaloneAPI = "https://api.github.com/repos/ernie/trinity-standalone/releases/latest"
-)
+const EngineAPI = "https://api.github.com/repos/ernie/trinity-engine/releases/latest"
 
 // Spec names one release asset and the file that must sit at its root once any wrapper directory is stripped.
 type Spec struct {
@@ -43,4 +40,4 @@ func PCSpec(goos, goarch string) (Spec, error) {
 }
 
 func FrameSpec() Spec   { return Spec{EngineAPI, "trinity-frame-arm64.zip", KindZip, "trinity"} }
-func AndroidSpec() Spec { return Spec{StandaloneAPI, "trinity-standalone.apk", KindAPK, ""} }
+func AndroidSpec() Spec { return Spec{EngineAPI, "trinity-android-arm64.apk", KindAPK, ""} }

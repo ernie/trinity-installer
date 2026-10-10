@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -19,7 +21,12 @@ func TestFetchReturnsTheReleaseTag(t *testing.T) {
 			w.Write([]byte("zip"))
 			return
 		}
-		fmt.Fprintf(w, `{"tag_name":"v0.9.1","assets":[{"name":"t.zip","size":3,"browser_download_url":"%s/asset"}]}`, srv.URL)
+		if r.URL.Path == "/sums" {
+			h := sha256.Sum256([]byte("zip"))
+			fmt.Fprintf(w, "%s  t.zip\n", hex.EncodeToString(h[:]))
+			return
+		}
+		fmt.Fprintf(w, `{"tag_name":"v0.9.1","assets":[{"name":"t.zip","size":3,"browser_download_url":"%s/asset"},{"name":"sha256sums.txt","size":72,"browser_download_url":"%s/sums"}]}`, srv.URL, srv.URL)
 	}))
 	defer srv.Close()
 	a := test.NewApp()

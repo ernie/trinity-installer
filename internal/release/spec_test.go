@@ -27,7 +27,7 @@ func TestPCSpec(t *testing.T) {
 	if f := FrameSpec(); f.Asset != "trinity-frame-arm64.zip" || f.Root != "trinity" || f.Kind != KindZip {
 		t.Fatalf("%+v", f)
 	}
-	if a := AndroidSpec(); a.Asset != "trinity-standalone.apk" || a.Kind != KindAPK || a.API != StandaloneAPI {
+	if a := AndroidSpec(); a.Asset != "trinity-android-arm64.apk" || a.Kind != KindAPK || a.API != EngineAPI {
 		t.Fatalf("%+v", a)
 	}
 }
