@@ -212,7 +212,11 @@ func (u *ui) renderValidation() {
 	choose := widget.NewButton("Choose...", func() {
 		u.pickFolder(u.quake3Folder.Text, func(dir string) { u.quake3Folder.SetText(dir) })
 	})
-	body := container.NewVBox(caption, container.NewBorder(nil, nil, nil, choose, u.quake3Folder), u.baseq3Line, u.missionpackLine)
+	u.resetSettings = widget.NewCheck("Reset game settings", func(on bool) { u.clearSettings = on })
+	u.resetSettings.SetChecked(u.clearSettings)
+	resetNote := widget.NewLabel("Starts Trinity with its defaults. Your current settings are kept as q3config.cfg.bak.")
+	resetNote.Wrapping = fyne.TextWrapWord
+	body := container.NewVBox(caption, container.NewBorder(nil, nil, nil, choose, u.quake3Folder), u.baseq3Line, u.missionpackLine, u.resetSettings, resetNote)
 	back := widget.NewButton("Back", func() { u.backFromQuake3() })
 	u.show(container.NewBorder(nil, buttonRow(back, u.quake3Next), nil, nil, body))
 }
@@ -269,7 +273,7 @@ func (u *ui) showInstall() {
 	u.rows = nil
 	u.carry = &install.Carry{}
 	var err error
-	if u.plan, err = target.Plan(context.Background(), u.target); err != nil {
+	if u.plan, err = target.Plan(context.Background(), u.target, u.clearSettings); err != nil {
 		msg := widget.NewLabel(err.Error())
 		msg.Wrapping = fyne.TextWrapWord
 		u.show(container.NewBorder(nil, widget.NewButton("Back", func() { u.showQuake3() }), nil, nil, msg))

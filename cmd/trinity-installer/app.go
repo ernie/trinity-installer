@@ -83,6 +83,9 @@ type ui struct {
 	installFailure              *widget.Label
 	quake3Next                  *widget.Button
 	baseq3Line, missionpackLine *widget.Label
+	resetSettings               *widget.Check
+	// clearSettings is the Reset game settings choice for this run only; it starts unchecked every time the installer opens.
+	clearSettings bool
 	headsetManual               *widget.Entry
 	headsetNext                 *widget.Button
 	headsetStatus               *widget.Label

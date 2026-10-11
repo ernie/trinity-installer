@@ -50,7 +50,7 @@ func TestDefaultsCheckTheEntryBoxes(t *testing.T) {
 
 func TestApplicableFollowsTheEntryBoxes(t *testing.T) {
 	has := func(o Options) bool {
-		plan, _ := target.Plan(context.Background(), New(o))
+		plan, _ := target.Plan(context.Background(), New(o), false)
 		for _, s := range plan {
 			if s == target.RegisterLaunchEntry {
 				return true

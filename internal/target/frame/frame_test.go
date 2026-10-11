@@ -232,7 +232,7 @@ func setup(t *testing.T) (*Target, *fakeSession, install.Options) {
 }
 
 func runFrom(tg *Target, opts install.Options, from int) ([]install.Progress, error) {
-	plan, err := target.Plan(context.Background(), tg)
+	plan, err := target.Plan(context.Background(), tg, false)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +252,7 @@ func stepError(t *testing.T, err error, want target.Step) *install.StepError {
 
 func TestPlanIsTheFullFrameList(t *testing.T) {
 	tg, _, _ := setup(t)
-	plan, err := target.Plan(context.Background(), tg)
+	plan, err := target.Plan(context.Background(), tg, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -483,5 +483,16 @@ func TestDoneText(t *testing.T) {
 func TestShellQuote(t *testing.T) {
 	if shellQuote("10005062") != "10005062" || shellQuote("a b;rm") != "'a b;rm'" || shellQuote("it's") != `'it'\''s'` {
 		t.Fatal("quoting")
+	}
+}
+
+func TestClearSettingsMovesTheNativeConfigsAside(t *testing.T) {
+	f := newFake()
+	tg := New(f, nil, "Trinity")
+	if err := tg.ClearSettings(context.Background(), func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if f.runs(target.ClearSettingsScript("/home/steamos/.trinity")) != 1 {
+		t.Fatalf("%q", f.cmds)
 	}
 }

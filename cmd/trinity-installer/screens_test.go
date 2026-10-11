@@ -54,7 +54,8 @@ func TestScreensBuild(t *testing.T) {
 	ui.showQuake3()
 	ui.renderValidation()
 	ui.showInstall()
-	if len(ui.rows) != len(target.Names) {
+	// every step but Clear game settings, which waits for its checkbox
+	if len(ui.rows) != len(target.Names)-1 {
 		t.Fatalf("%d install rows for the Frame plan", len(ui.rows))
 	}
 	ui.showDone()
@@ -553,7 +554,7 @@ func TestPCScreenDisablesSteamWithoutAUser(t *testing.T) {
 		t.Fatalf("reason %v %q", ui.pcSteamNote.Visible(), ui.pcSteamNote.Text)
 	}
 	ui.pcNext.OnTapped()
-	plan, err := target.Plan(context.Background(), ui.target)
+	plan, err := target.Plan(context.Background(), ui.target, false)
 	if err != nil || ui.pc.AddToSteam || len(plan) != 6 {
 		t.Fatalf("add to Steam %v, plan %v %v", ui.pc.AddToSteam, plan, err)
 	}
@@ -1293,7 +1294,7 @@ func TestSteamThatWillNotCloseOffersRetryAndBack(t *testing.T) {
 	}
 	refuse = false
 	ui.installRetry.OnTapped()
-	plan, _ := target.Plan(context.Background(), ui.target)
+	plan, _ := target.Plan(context.Background(), ui.target, false)
 	if len(froms) != 2 || froms[1] != steamRefusal(plan).(*install.StepError).Index || !strings.Contains(labels(ui.content), "Trinity is installed") {
 		t.Fatalf("%v %q", froms, labels(ui.content))
 	}
@@ -1475,5 +1476,33 @@ func TestDoneSpellsOutTheDocsLinkWhenTheBrowserWillNotOpen(t *testing.T) {
 	texts, _ := doneScreen(ui)
 	if !strings.Contains(strings.Join(texts, "|"), "https://trinity.run/docs") {
 		t.Fatalf("%q", texts)
+	}
+}
+
+func TestQuake3ResetSettingsAddsTheStep(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	ui := newUI(a, a.NewWindow("t"), t.TempDir())
+	t.Cleanup(func() { ui.logFile.Close() })
+	ui.target = local.New(local.Options{GOOS: "darwin", InstallDir: t.TempDir(), PaksDir: t.TempDir()})
+	ui.quake3Dir = quake3Folder(t, true)
+	ui.showQuake3()
+	if ui.resetSettings == nil || !ui.resetSettings.Visible() || ui.resetSettings.Checked {
+		t.Fatal("Reset game settings must show, unchecked")
+	}
+	ui.resetSettings.SetChecked(true)
+	inlineBackground(t)
+	old := runInstall
+	runInstall = func(context.Context, target.Target, []target.Step, install.Options, int, func(install.Progress)) error {
+		return nil
+	}
+	defer func() { runInstall = old }()
+	ui.showInstall()
+	if len(ui.rows) < 3 || !strings.Contains(ui.rows[2], "Clear game settings") {
+		t.Fatalf("%q", ui.rows)
+	}
+	ui.showQuake3() // coming back keeps the choice for this run
+	if !ui.resetSettings.Checked {
+		t.Fatal("the choice was lost going back")
 	}
 }

@@ -26,11 +26,12 @@ func (s stub) RegisterVR(context.Context, uint32, map[string][]byte, func(string
 func (s stub) InstallArtwork(context.Context, uint32, map[string][]byte, func(string)) error {
 	return nil
 }
+func (s stub) ClearSettings(context.Context, func(string)) error { return nil }
 func (s stub) Done() string                    { return "" }
 func (s stub) Reconnect(context.Context) error { return nil }
 
 func TestPlanOrdersAndAlwaysIncludesTheCore(t *testing.T) {
-	plan, err := Plan(context.Background(), stub{[]Step{InstallArtwork, PushPatch, RegisterLaunchEntry, PushPatch}})
+	plan, err := Plan(context.Background(), stub{[]Step{InstallArtwork, PushPatch, RegisterLaunchEntry, PushPatch}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,8 +44,35 @@ func TestPlanOrdersAndAlwaysIncludesTheCore(t *testing.T) {
 			t.Fatalf("%v", plan)
 		}
 	}
-	plan, _ = Plan(context.Background(), stub{nil})
+	plan, _ = Plan(context.Background(), stub{nil}, false)
 	if len(plan) != 4 {
 		t.Fatalf("%v", plan)
+	}
+}
+
+func TestPlanClearsSettingsOnlyWhenAsked(t *testing.T) {
+	plan, _ := Plan(context.Background(), stub{[]Step{PushPatch}}, true)
+	want := []Step{FetchRelease, PrepareDestination, ClearSettings, PushPackage, PushRetailPaks, PushPatch}
+	if len(plan) != len(want) {
+		t.Fatalf("%v", plan)
+	}
+	for i := range want {
+		if plan[i] != want[i] {
+			t.Fatalf("%v", plan)
+		}
+	}
+	plan, _ = Plan(context.Background(), stub{[]Step{PushPatch}}, false)
+	for _, s := range plan {
+		if s == ClearSettings {
+			t.Fatalf("%v", plan)
+		}
+	}
+}
+
+func TestClearSettingsScriptKeepsOneBackupPerConfig(t *testing.T) {
+	got := ClearSettingsScript("/home/steamos/.trinity", "/sdcard/Trinity")
+	want := `for f in /home/steamos/.trinity/baseq3/q3config.cfg /home/steamos/.trinity/missionpack/q3config.cfg /sdcard/Trinity/baseq3/q3config.cfg /sdcard/Trinity/missionpack/q3config.cfg; do if [ -f "$f" ]; then mv -f "$f" "$f.bak"; fi; done`
+	if got != want {
+		t.Fatalf("%s", got)
 	}
 }

@@ -15,6 +15,9 @@ import (
 
 const destDir = "/sdcard/Trinity"
 
+// sharedHome is the engine's home instead of destDir when it exists.
+const sharedHome = "/sdcard/Documents/Trinity"
+
 var errNotApplicable = errors.New("not applicable")
 
 type Target struct {
@@ -66,6 +69,14 @@ func (t *Target) PrepareDestination(ctx context.Context, log func(string)) (stri
 	}
 	log("pak folders under " + destDir)
 	return destDir, nil
+}
+
+func (t *Target) ClearSettings(ctx context.Context, log func(string)) error {
+	if _, err := t.a.Shell(ctx, t.d.Serial, target.ClearSettingsScript(destDir, sharedHome)); err != nil {
+		return err
+	}
+	log("game settings moved to q3config.cfg.bak")
+	return nil
 }
 
 func (t *Target) PushPackage(ctx context.Context, pkg *release.Package, log func(string)) error {

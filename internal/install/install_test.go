@@ -56,7 +56,7 @@ func collect() (func(Progress), *[]Progress) {
 
 func TestRunFullPlan(t *testing.T) {
 	ft := newFakeTarget(target.PushPatch, target.RegisterLaunchEntry, target.ReadAppID, target.RegisterVR, target.InstallArtwork)
-	plan, _ := target.Plan(context.Background(), ft)
+	plan, _ := target.Plan(context.Background(), ft, false)
 	report, events := collect()
 	if err := Run(context.Background(), ft, plan, options(t), 0, report); err != nil {
 		t.Fatalf("%v\n%s", err, ft.st.dump())
@@ -81,7 +81,7 @@ func TestRunFullPlan(t *testing.T) {
 
 func TestRunShortPlanNeverCallsAbsentHooks(t *testing.T) {
 	ft := newFakeTarget()
-	plan, _ := target.Plan(context.Background(), ft)
+	plan, _ := target.Plan(context.Background(), ft, false)
 	report, _ := collect()
 	if err := Run(context.Background(), ft, plan, options(t), 0, report); err != nil {
 		t.Fatal(err)
@@ -93,7 +93,7 @@ func TestRunShortPlanNeverCallsAbsentHooks(t *testing.T) {
 
 func TestPatchStepMixesLocalAndDownloaded(t *testing.T) {
 	ft := newFakeTarget(target.PushPatch)
-	plan, _ := target.Plan(context.Background(), ft)
+	plan, _ := target.Plan(context.Background(), ft, false)
 	opts := options(t)
 	opts.Paks = localPaks(t, "baseq3/pak0.pk3", "baseq3/pak1.pk3", "missionpack/pak0.pk3")
 	set, err := patch.OpenSet(zipOf("baseq3/pak1.pk3", "baseq3/pak2.pk3", "missionpack/pak1.pk3", "missionpack/pak2.pk3"))
@@ -121,7 +121,7 @@ func TestPatchStepMixesLocalAndDownloaded(t *testing.T) {
 
 func TestPaksSkipSameSizeAndRespectFreeSpace(t *testing.T) {
 	ft := newFakeTarget()
-	plan, _ := target.Plan(context.Background(), ft)
+	plan, _ := target.Plan(context.Background(), ft, false)
 	opts := options(t)
 	ft.st.files["/dest/baseq3/pak0.pk3"] = []byte("pak baseq3/pak0.pk3")
 	report, _ := collect()
@@ -143,7 +143,7 @@ func TestPaksSkipSameSizeAndRespectFreeSpace(t *testing.T) {
 
 func TestRetryFromFailedStepReconnectsAndCarriesState(t *testing.T) {
 	ft := newFakeTarget(target.RegisterLaunchEntry, target.ReadAppID)
-	plan, _ := target.Plan(context.Background(), ft)
+	plan, _ := target.Plan(context.Background(), ft, false)
 	opts := options(t)
 	opts.Carry = &Carry{}
 	ft.Fail["launch"] = errors.New("Steam is not running")
@@ -167,7 +167,7 @@ func TestRetryFromFailedStepReconnectsAndCarriesState(t *testing.T) {
 
 func TestFetchRejectsBadAsset(t *testing.T) {
 	ft := newFakeTarget()
-	plan, _ := target.Plan(context.Background(), ft)
+	plan, _ := target.Plan(context.Background(), ft, false)
 	opts := options(t)
 	opts.Fetch = func(context.Context, release.Spec, func(string)) ([]byte, string, error) {
 		return zipOf("other"), "v1", nil
@@ -182,7 +182,7 @@ func TestFetchRejectsBadAsset(t *testing.T) {
 
 func TestPatchStepSaysWhenNothingWasDownloaded(t *testing.T) {
 	ft := newFakeTarget(target.PushPatch)
-	plan, _ := target.Plan(context.Background(), ft)
+	plan, _ := target.Plan(context.Background(), ft, false)
 	report, events := collect()
 	if err := Run(context.Background(), ft, plan, options(t), 0, report); err != nil {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ func TestPatchStepSaysWhenNothingWasDownloaded(t *testing.T) {
 
 func TestRetryResumesWithTheCarriedAppID(t *testing.T) {
 	ft := newFakeTarget(target.ReadAppID, target.RegisterVR, target.InstallArtwork)
-	plan, _ := target.Plan(context.Background(), ft)
+	plan, _ := target.Plan(context.Background(), ft, false)
 	opts := options(t)
 	opts.Carry = &Carry{}
 	ft.Fail["vr:42"] = errors.New("SteamVR said no")
@@ -218,7 +218,7 @@ func TestRetryResumesWithTheCarriedAppID(t *testing.T) {
 
 func TestRetryResumesWithTheCarriedPaksDir(t *testing.T) {
 	ft := newFakeTarget(target.PushPatch)
-	plan, _ := target.Plan(context.Background(), ft)
+	plan, _ := target.Plan(context.Background(), ft, false)
 	opts := options(t)
 	opts.Carry = &Carry{}
 	set, err := patch.OpenSet(zipOf("baseq3/pak1.pk3", "missionpack/pak1.pk3"))
@@ -244,7 +244,7 @@ func TestRetryResumesWithTheCarriedPaksDir(t *testing.T) {
 
 func TestRunRefusesARetryWithoutState(t *testing.T) {
 	ft := newFakeTarget(target.RegisterLaunchEntry)
-	plan, _ := target.Plan(context.Background(), ft)
+	plan, _ := target.Plan(context.Background(), ft, false)
 	report, _ := collect()
 	opts := options(t)
 	if err := Run(context.Background(), ft, plan, opts, 3, report); err == nil {
@@ -266,7 +266,7 @@ func TestRunRefusesARetryWithoutState(t *testing.T) {
 
 func TestPaksRepushADifferentSizeFile(t *testing.T) {
 	ft := newFakeTarget()
-	plan, _ := target.Plan(context.Background(), ft)
+	plan, _ := target.Plan(context.Background(), ft, false)
 	ft.st.files["/dest/baseq3/pak0.pk3"] = []byte("truncated")
 	report, _ := collect()
 	if err := Run(context.Background(), ft, plan, options(t), 0, report); err != nil {
@@ -279,7 +279,7 @@ func TestPaksRepushADifferentSizeFile(t *testing.T) {
 
 func TestCancelInsidePushAllWritesNothing(t *testing.T) {
 	ft := newFakeTarget()
-	plan, _ := target.Plan(context.Background(), ft)
+	plan, _ := target.Plan(context.Background(), ft, false)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	puts := -1
@@ -300,7 +300,7 @@ func TestCancelInsidePushAllWritesNothing(t *testing.T) {
 
 func TestFakePushPackageReportsPutErrors(t *testing.T) {
 	ft := newFakeTarget()
-	plan, _ := target.Plan(context.Background(), ft)
+	plan, _ := target.Plan(context.Background(), ft, false)
 	ft.st.failPut["/dest/trinity"] = errors.New("disk full")
 	report, _ := collect()
 	err := Run(context.Background(), ft, plan, options(t), 0, report)
@@ -321,7 +321,7 @@ func (r *recordingTarget) Pushed(rel string) { r.pushed = append(r.pushed, rel) 
 func TestRecorderHearsOnlyWrittenPaks(t *testing.T) {
 	rt := &recordingTarget{fakeTarget: newFakeTarget(target.PushPatch)}
 	var _ target.Recorder = rt
-	plan, _ := target.Plan(context.Background(), rt)
+	plan, _ := target.Plan(context.Background(), rt, false)
 	opts := options(t)
 	set, err := patch.OpenSet(zipOf("baseq3/pak1.pk3", "baseq3/pak2.pk3", "missionpack/pak1.pk3", "missionpack/pak2.pk3"))
 	if err != nil {
@@ -336,5 +336,17 @@ func TestRecorderHearsOnlyWrittenPaks(t *testing.T) {
 	}
 	if got := strings.Join(rt.pushed, ","); got != "missionpack/pak0.pk3,missionpack/pak1.pk3" {
 		t.Fatal(got)
+	}
+}
+
+func TestRunClearsSettingsBeforeThePackage(t *testing.T) {
+	ft := newFakeTarget()
+	plan, _ := target.Plan(context.Background(), ft, true)
+	report, _ := collect()
+	if err := Run(context.Background(), ft, plan, options(t), 0, report); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(ft.calls, ","); got != "prepare,clear,package" {
+		t.Fatalf("%s", got)
 	}
 }

@@ -195,6 +195,40 @@ func (t *Target) PrepareDestination(ctx context.Context, log func(string)) (stri
 	return t.opts.PaksDir, nil
 }
 
+// settingsRoot is the engine's home: next to the exe on Windows (fs_multiuser 0), per user elsewhere.
+func (t *Target) settingsRoot() (string, error) {
+	if t.opts.GOOS == "windows" {
+		return t.opts.InstallDir, nil
+	}
+	home, err := t.homeDir()
+	if err != nil {
+		return "", err
+	}
+	if t.opts.GOOS == "darwin" {
+		return joinFor(t.opts.GOOS, home, "Library", "Application Support", "Trinity"), nil
+	}
+	return joinFor(t.opts.GOOS, home, ".trinity"), nil
+}
+
+func (t *Target) ClearSettings(ctx context.Context, log func(string)) error {
+	root, err := t.settingsRoot()
+	if err != nil {
+		return err
+	}
+	for _, game := range []string{"baseq3", "missionpack"} {
+		cfg := filepath.Join(root, game, "q3config.cfg")
+		err := os.Rename(cfg, cfg+".bak")
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		log(t.tilde(cfg) + " moved to q3config.cfg.bak")
+	}
+	return nil
+}
+
 func (t *Target) PushPackage(ctx context.Context, pkg *release.Package, log func(string)) error {
 	t.tag = pkg.Tag
 	if pkg.Spec.Kind == release.KindDMG {

@@ -48,7 +48,7 @@ var quest = adb.Device{Serial: "2G0YC1ZF8M0ABC", Model: "Quest 3", State: "devic
 
 func TestPlanPushesThePatchOnly(t *testing.T) {
 	f := &fake{}
-	plan, err := target.Plan(context.Background(), New(f.adb(), quest))
+	plan, err := target.Plan(context.Background(), New(f.adb(), quest), false)
 	if err != nil || len(plan) != 5 || plan[4] != target.PushPatch {
 		t.Fatalf("%v %v", plan, err)
 	}
@@ -148,5 +148,17 @@ func TestNeverPlannedHooks(t *testing.T) {
 	}
 	if tg.Name() != "Quest / PICO" || tg.Asset() != release.AndroidSpec() || tg.Store() == nil {
 		t.Fatal(tg.Name(), tg.Asset())
+	}
+}
+
+// The engine's Android home is /sdcard/Documents/Trinity when that folder exists, else /sdcard/Trinity.
+func TestClearSettingsMovesBothHomesConfigsAside(t *testing.T) {
+	f := &fake{}
+	if err := New(f.adb(), quest).ClearSettings(context.Background(), func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	want := "-s 2G0YC1ZF8M0ABC shell " + target.ClearSettingsScript("/sdcard/Trinity", "/sdcard/Documents/Trinity")
+	if len(f.argv) != 1 || f.argv[0] != want {
+		t.Fatalf("%q", f.argv)
 	}
 }

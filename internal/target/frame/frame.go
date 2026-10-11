@@ -98,6 +98,15 @@ func (t *Target) PrepareDestination(ctx context.Context, log func(string)) (stri
 	return t.titleDir, nil
 }
 
+func (t *Target) ClearSettings(ctx context.Context, log func(string)) error {
+	home := path.Join(t.sess.Home(), ".trinity")
+	if _, err := t.sess.Run(ctx, target.ClearSettingsScript(home)); err != nil {
+		return err
+	}
+	log("game settings under " + home + " moved to q3config.cfg.bak")
+	return nil
+}
+
 func (t *Target) PushPackage(ctx context.Context, pkg *release.Package, log func(string)) error {
 	s := t.Store()
 	for _, e := range pkg.Entries {

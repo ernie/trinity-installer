@@ -100,6 +100,8 @@ func run(ctx context.Context, t target.Target, st *state, step target.Step, log 
 		dir, err := t.PrepareDestination(ctx, log)
 		st.paksDir = dir
 		return err
+	case target.ClearSettings:
+		return t.ClearSettings(ctx, log)
 	case target.PushPackage:
 		return t.PushPackage(ctx, st.pkg, log)
 	case target.PushRetailPaks:

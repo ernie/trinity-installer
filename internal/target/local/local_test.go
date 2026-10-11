@@ -39,24 +39,24 @@ func TestDefaultsPerOS(t *testing.T) {
 }
 
 func TestApplicable(t *testing.T) {
-	plan, _ := target.Plan(context.Background(), New(Options{GOOS: "windows", InstallDir: t.TempDir()}))
+	plan, _ := target.Plan(context.Background(), New(Options{GOOS: "windows", InstallDir: t.TempDir()}), false)
 	if len(plan) != 6 || plan[4] != target.PushPatch || plan[5] != target.RegisterLaunchEntry {
 		t.Fatalf("%v", plan)
 	}
 	// SteamVR learns of the app from the VR Steam shortcut, so a PC install registers no manifest of its own.
-	plan, _ = target.Plan(context.Background(), New(Options{GOOS: "windows", AddToSteam: true, SteamRoot: "x", SteamUser: "x/userdata/1", SteamVRRoot: "y"}))
+	plan, _ = target.Plan(context.Background(), New(Options{GOOS: "windows", AddToSteam: true, SteamRoot: "x", SteamUser: "x/userdata/1", SteamVRRoot: "y"}), false)
 	if len(plan) != 8 || plan[7] != target.InstallArtwork {
 		t.Fatalf("%v", plan)
 	}
-	plan, _ = target.Plan(context.Background(), New(Options{GOOS: "windows", AddToSteam: true, SteamRoot: "x", SteamUser: "x/userdata/1"}))
+	plan, _ = target.Plan(context.Background(), New(Options{GOOS: "windows", AddToSteam: true, SteamRoot: "x", SteamUser: "x/userdata/1"}), false)
 	if len(plan) != 8 || plan[7] != target.InstallArtwork {
 		t.Fatalf("%v", plan)
 	}
-	plan, _ = target.Plan(context.Background(), New(Options{GOOS: "windows", AddToSteam: true, SteamRoot: "x", SteamVRRoot: "y"}))
+	plan, _ = target.Plan(context.Background(), New(Options{GOOS: "windows", AddToSteam: true, SteamRoot: "x", SteamVRRoot: "y"}), false)
 	if len(plan) != 6 {
 		t.Fatalf("Steam steps planned without a Steam user: %v", plan)
 	}
-	plan, _ = target.Plan(context.Background(), New(Options{GOOS: "darwin", AddToSteam: true, SteamRoot: "x", SteamUser: "x/userdata/1", SteamVRRoot: "y"}))
+	plan, _ = target.Plan(context.Background(), New(Options{GOOS: "darwin", AddToSteam: true, SteamRoot: "x", SteamUser: "x/userdata/1", SteamVRRoot: "y"}), false)
 	if len(plan) != 5 || plan[4] != target.PushPatch {
 		t.Fatalf("mac must never register with Steam: %v", plan)
 	}
@@ -624,5 +624,42 @@ func TestReinstallKeepsTheUsersSettingsOnAKeptSteamShortcut(t *testing.T) {
 		if tags, _ := e["tags"].(map[string]any); tags["0"] != "Favorites" {
 			t.Fatalf("tags lost: %+v", e["tags"])
 		}
+	}
+}
+
+// The engine's home: next to the exe on Windows (fs_multiuser 0), per user elsewhere.
+func TestSettingsRootFollowsTheEnginesHome(t *testing.T) {
+	cases := []struct{ goos, want string }{
+		{"windows", `C:\Games\Trinity`},
+		{"darwin", "/Users/me/Library/Application Support/Trinity"},
+		{"linux", "/home/me/.trinity"},
+	}
+	for _, c := range cases {
+		tg := New(Options{GOOS: c.goos, InstallDir: `C:\Games\Trinity`})
+		tg.home = map[string]string{"windows": `C:\Users\me`, "darwin": "/Users/me", "linux": "/home/me"}[c.goos]
+		if got, err := tg.settingsRoot(); err != nil || got != c.want {
+			t.Fatalf("%s: %s %v", c.goos, got, err)
+		}
+	}
+}
+
+func TestClearSettingsKeepsOneBackup(t *testing.T) {
+	home := t.TempDir()
+	tg := New(Options{GOOS: "linux"})
+	tg.home = home
+	baseq3 := filepath.Join(home, ".trinity", "baseq3")
+	os.MkdirAll(baseq3, 0o755)
+	os.WriteFile(filepath.Join(baseq3, "q3config.cfg"), []byte("new"), 0o644)
+	os.WriteFile(filepath.Join(baseq3, "q3config.cfg.bak"), []byte("old"), 0o644)
+	for i := 0; i < 2; i++ { // a second run finds nothing to move and leaves the backup
+		if err := tg.ClearSettings(context.Background(), func(string) {}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(baseq3, "q3config.cfg")); !os.IsNotExist(err) {
+		t.Fatalf("config still there: %v", err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(baseq3, "q3config.cfg.bak")); string(b) != "new" {
+		t.Fatalf("backup %q", b)
 	}
 }

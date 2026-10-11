@@ -101,6 +101,7 @@ func (f *fakeTarget) Asset() release.Spec                               { return
 func (f *fakeTarget) PrepareDestination(context.Context, func(string)) (string, error) {
 	return f.paksDir, f.hook("prepare")
 }
+func (f *fakeTarget) ClearSettings(context.Context, func(string)) error { return f.hook("clear") }
 func (f *fakeTarget) PushPackage(ctx context.Context, pkg *release.Package, log func(string)) error {
 	if err := f.hook("package"); err != nil {
 		return err
