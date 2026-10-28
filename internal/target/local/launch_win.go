@@ -17,8 +17,12 @@ func (t *Target) windowsShortcut(ctx context.Context, log func(string)) error {
 	}
 	t.startMenuLnks = nil
 	for _, m := range t.launchModes() {
-		lnk := filepath.Join(programs, m.name+".lnk")
-		if _, err := t.shellShortcut(ctx, fmt.Sprintf(`[IO.Directory]::CreateDirectory('%s')|Out-Null;$l='%s'`, psQuote(programs), psQuote(lnk)), m.args); err != nil {
+		lnk := filepath.Join(programs, t.shortcutFile(m))
+		if url, ok := t.steamLaunch(m); ok {
+			if err := t.writeURLShortcut(lnk, url); err != nil {
+				return fmt.Errorf("creating the Start Menu shortcut %s: %w", m.name, err)
+			}
+		} else if _, err := t.shellShortcut(ctx, fmt.Sprintf(`[IO.Directory]::CreateDirectory('%s')|Out-Null;$l='%s'`, psQuote(programs), psQuote(lnk)), m.args); err != nil {
 			return fmt.Errorf("creating the Start Menu shortcut %s: %w", m.name, err)
 		}
 		t.startMenuLnks = append(t.startMenuLnks, lnk)
@@ -32,7 +36,7 @@ func (t *Target) windowsShortcut(ctx context.Context, log func(string)) error {
 func (t *Target) pruneLinks(recorded []string, ours func(string) bool, log func(string)) {
 	var keep []string
 	for _, m := range t.launchModes() {
-		keep = append(keep, m.name+".lnk")
+		keep = append(keep, t.shortcutFile(m))
 	}
 	for _, p := range recorded {
 		if containsFold(keep, filepath.Base(p)) || !ours(p) {
@@ -50,7 +54,15 @@ func (t *Target) pruneLinks(recorded []string, ours func(string) bool, log func(
 func (t *Target) windowsDesktopShortcut(ctx context.Context, log func(string)) error {
 	t.desktopLnks = nil
 	for _, m := range t.launchModes() {
-		name := m.name + ".lnk"
+		name := t.shortcutFile(m)
+		if url, ok := t.steamLaunch(m); ok {
+			p := filepath.Join(shellDesktop(ctx), name)
+			if err := t.writeURLShortcut(p, url); err != nil {
+				return fmt.Errorf("creating the Desktop shortcut %s: %w", m.name, err)
+			}
+			t.desktopLnks = append(t.desktopLnks, p)
+			continue
+		}
 		out, err := t.shellShortcut(ctx, fmt.Sprintf(`$d=[Environment]::GetFolderPath('Desktop');if(-not $d){$d=Join-Path $env:USERPROFILE 'Desktop'};$l=Join-Path $d '%s';[IO.Directory]::CreateDirectory($d)|Out-Null`, psQuote(name)), m.args)
 		if err != nil {
 			return fmt.Errorf("creating the Desktop shortcut %s: %w", m.name, err)
@@ -70,6 +82,22 @@ func (t *Target) windowsDesktopShortcut(ctx context.Context, log func(string)) e
 	t.pruneLinks(t.rec.DesktopLinks, func(p string) bool { return isDesktopLink(ctx, p) }, log)
 	log("Desktop shortcuts written")
 	return nil
+}
+
+// shortcutFile is m's shortcut file: a .url like Steam's own when it opens the Steam entry, else a .lnk to the game.
+func (t *Target) shortcutFile(m launchMode) string {
+	if _, ok := t.steamLaunch(m); ok {
+		return m.name + ".url"
+	}
+	return m.name + ".lnk"
+}
+
+// writeURLShortcut writes an Internet Shortcut the way Steam writes its desktop shortcuts, with the game's icon.
+func (t *Target) writeURLShortcut(p, url string) error {
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte("[InternetShortcut]\r\nURL="+url+"\r\nIconFile="+t.exe()+"\r\nIconIndex=0\r\n"), 0o644)
 }
 
 // psUTF8 makes PowerShell print paths as UTF-8, so a non-ASCII user folder survives the trip back.

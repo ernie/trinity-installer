@@ -650,11 +650,11 @@ func removeIfEmpty(p string, log func(string)) {
 	}
 }
 
-// linkNames are the .lnk files of every Trinity shortcut name.
+// linkNames are the shortcut files of every Trinity shortcut name, a .lnk to the game or a .url to its Steam entry.
 func linkNames() []string {
 	var names []string
 	for _, n := range shortcutNames {
-		names = append(names, n+".lnk")
+		names = append(names, n+".lnk", n+".url")
 	}
 	return names
 }

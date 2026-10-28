@@ -62,7 +62,8 @@ func installForUninstallOn(t *testing.T, desktopName string) installed {
 	if len(in.appIDs) != 2 {
 		t.Fatalf("setup: %v", in.appIDs)
 	}
-	in.desktop, in.desktopFlat = filepath.Join(desktop, "Trinity.lnk"), filepath.Join(desktop, "Trinity (Flat).lnk")
+	// VR opens its Steam entry through a .url; Flat launches the game through a .lnk.
+	in.desktop, in.desktopFlat = filepath.Join(desktop, "Trinity.url"), filepath.Join(desktop, "Trinity (Flat).lnk")
 	art := map[string][]byte{"capsule": {1}, "wide": {2}, "hero": {3}, "logo": {4}, "icon": {5}}
 	id, err := tg.ReadAppID(ctx, log)
 	if err != nil {
@@ -74,11 +75,10 @@ func installForUninstallOn(t *testing.T, desktopName string) installed {
 	if grid, _ := os.ReadDir(filepath.Join(in.user, "config", "grid")); len(grid) != 11 {
 		t.Fatalf("setup: five grid files per shortcut beside the other game's: %v", grid)
 	}
-	// The stubbed PowerShell calls wrote no Start Menu shortcuts, so stand them in where they would be.
+	// The stubbed PowerShell calls wrote no Start Menu .lnk, so stand it in where it would be.
 	programs := filepath.Join(roaming, "Microsoft", "Windows", "Start Menu", "Programs")
-	in.lnk, in.lnkFlat = filepath.Join(programs, "Trinity.lnk"), filepath.Join(programs, "Trinity (Flat).lnk")
+	in.lnk, in.lnkFlat = filepath.Join(programs, "Trinity.url"), filepath.Join(programs, "Trinity (Flat).lnk")
 	os.MkdirAll(programs, 0o755)
-	os.WriteFile(in.lnk, []byte("lnk"), 0o644)
 	os.WriteFile(in.lnkFlat, []byte("lnk"), 0o644)
 	in.settings = filepath.Join(roaming, "Trinity")
 	os.MkdirAll(filepath.Join(in.settings, "baseq3"), 0o755)

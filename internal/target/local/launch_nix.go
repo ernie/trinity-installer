@@ -34,26 +34,35 @@ func (t *Target) desktopFiles(log func(string)) error {
 		}
 		var written []string
 		for _, m := range modes {
-			body := []byte("[Desktop Entry]\nType=Application\nName=" + desktopString(m.name) + "\nExec=" + exec + " " + m.args + "\nPath=" + desktopString(t.opts.InstallDir) + "\nIcon=" + desktopString(path.Join(t.opts.InstallDir, "trinity.png")) + "\nCategories=Game;\nTerminal=false\n")
+			run := exec + " " + m.args
+			if url, ok := t.steamLaunch(m); ok {
+				run = "xdg-open " + url
+			}
+			body := []byte("[Desktop Entry]\nType=Application\nName=" + desktopString(m.name) + "\nExec=" + run + "\nPath=" + desktopString(t.opts.InstallDir) + "\nIcon=" + desktopString(path.Join(t.opts.InstallDir, "trinity.png")) + "\nCategories=Game;\nTerminal=false\n")
 			if err := writeDesktopFile(dir, m.file, body, mode); err != nil {
 				return err
 			}
 			written = append(written, m.file)
 		}
-		pruneDesktopFiles(dir, exec, written, log)
+		pruneDesktopFiles(dir, t.exe(), written, log)
 	}
 	log("launch entries written")
 	return nil
 }
 
-// pruneDesktopFiles removes our entries under a name this run no longer writes; one that launches another program is not ours.
-func pruneDesktopFiles(dir, exec string, written []string, log func(string)) {
+// pruneDesktopFiles removes our entries under a name this run no longer writes; one that launches another program or another Steam entry is not ours.
+func pruneDesktopFiles(dir, exe string, written []string, log func(string)) {
+	ours := []string{"\nExec=" + desktopExec(exe) + " "}
+	for _, n := range shortcutNames {
+		ours = append(ours, "\nExec=xdg-open "+steamRun(exe, n)+"\n")
+	}
 	for _, name := range desktopFileNames {
 		p := filepath.Join(dir, name)
 		if slices.Contains(written, name) {
 			continue
 		}
-		if b, err := os.ReadFile(p); err != nil || !strings.Contains(string(b), "\nExec="+exec+" ") {
+		b, err := os.ReadFile(p)
+		if err != nil || !slices.ContainsFunc(ours, func(s string) bool { return strings.Contains(string(b), s) }) {
 			continue
 		}
 		if err := os.Remove(p); err != nil {

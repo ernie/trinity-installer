@@ -111,6 +111,18 @@ func (t *Target) steamShortcut() bool {
 	return t.opts.GOOS != "darwin" && t.opts.AddToSteam && t.opts.SteamRoot != "" && t.opts.SteamUser != ""
 }
 
+// steamLaunch is the Steam library entry a VR shortcut opens while the Steam shortcut is written: SteamVR dismisses its Now Playing card by itself only for a game Steam launched.
+func (t *Target) steamLaunch(m launchMode) (string, bool) {
+	if !m.vr || !t.steamShortcut() {
+		return "", false
+	}
+	return steamRun(t.exe(), m.name), true
+}
+
+func steamRun(exe, name string) string {
+	return fmt.Sprintf("steam://rungameid/%d", steam.GameID64(steam.ShortcutAppID(exe, name)))
+}
+
 func (t *Target) Applicable(context.Context) ([]target.Step, error) {
 	steps := []target.Step{target.PushPatch}
 	// On Windows the step also writes the Settings > Apps entry, so it runs even with no shortcut asked for.

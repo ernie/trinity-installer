@@ -2,6 +2,7 @@ package local
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ernie/trinity-installer/internal/steam"
 	"github.com/ernie/trinity-installer/internal/target"
 )
 
@@ -161,6 +163,60 @@ func TestWindowsDesktopShortcutCommand(t *testing.T) {
 		t.Fatalf("no box ticked, yet %v", *cmds)
 	}
 }
+func TestWindowsVRShortcutLaunchesThroughSteam(t *testing.T) {
+	desktop := filepath.Join(t.TempDir(), "Desktop")
+	cmds := stubShell(t, desktop)
+	programs := filepath.Join(t.TempDir(), "Roaming")
+	t.Setenv("APPDATA", programs)
+	programs = filepath.Join(programs, "Microsoft", "Windows", "Start Menu", "Programs")
+	opts := Options{GOOS: "windows", InstallDir: `C:\T`, StartMenu: true, Desktop: true, PreferVR: true, AlsoOther: true,
+		AddToSteam: true, SteamRoot: `C:\Steam`, SteamUser: `C:\Steam\userdata\1`}
+	tg := New(opts)
+	if err := tg.registerDesktopEntry(context.Background(), func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("[InternetShortcut]\r\nURL=steam://rungameid/%d\r\nIconFile=%s\r\nIconIndex=0\r\n",
+		steam.GameID64(steam.ShortcutAppID(tg.exe(), "Trinity")), tg.exe())
+	for _, p := range []string{filepath.Join(programs, "Trinity.url"), filepath.Join(desktop, "Trinity.url")} {
+		if b, err := os.ReadFile(p); err != nil || string(b) != want {
+			t.Fatalf("%s: %q %v", p, b, err)
+		}
+	}
+	// Only the Flat shortcuts go through the shell, still launching the game itself.
+	if len(*cmds) != 3 {
+		t.Fatalf("%v", *cmds)
+	}
+	for _, c := range *cmds {
+		if joined := strings.Join(c, " "); strings.Contains(joined, "CreateShortcut") && (!strings.Contains(joined, "Trinity (Flat).lnk") || !strings.Contains(joined, "$s.Arguments='+set vr_enabled 0'")) {
+			t.Fatalf("%s", joined)
+		}
+	}
+	if !containsFold(tg.startMenuLnks, filepath.Join(programs, "Trinity.url")) || !containsFold(tg.desktopLnks, filepath.Join(desktop, "Trinity.url")) {
+		t.Fatalf("%q %q", tg.startMenuLnks, tg.desktopLnks)
+	}
+	if !isStartMenuLink(filepath.Join(programs, "Trinity.url")) || !isDesktopLink(context.Background(), filepath.Join(desktop, "Trinity.url")) {
+		t.Fatal("the uninstaller must recognize the Steam shortcuts")
+	}
+
+	// Without the Steam shortcut there is no Steam entry to launch, so VR launches the game and the old .url goes.
+	*cmds = nil
+	opts.AddToSteam = false
+	tg = New(opts)
+	tg.rec.StartMenuLinks = []string{filepath.Join(programs, "Trinity.url"), filepath.Join(programs, "Trinity (Flat).lnk")}
+	tg.rec.DesktopLinks = []string{filepath.Join(desktop, "Trinity.url")}
+	if err := tg.registerDesktopEntry(context.Background(), func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join((*cmds)[0], " "), "Trinity.lnk") || !strings.Contains(strings.Join((*cmds)[0], " "), "$s.Arguments='+set vr_enabled 1'") {
+		t.Fatalf("%v", *cmds)
+	}
+	for _, p := range []string{filepath.Join(programs, "Trinity.url"), filepath.Join(desktop, "Trinity.url")} {
+		if _, err := os.Stat(p); err == nil {
+			t.Fatalf("%s is no longer written, so it must go", p)
+		}
+	}
+}
+
 func TestWindowsDesktopPathNotPrinted(t *testing.T) {
 	stubShell(t, "")
 	var lines []string
@@ -207,6 +263,38 @@ func TestLinuxDesktopShortcut(t *testing.T) {
 		if string(menu) != string(b) {
 			t.Fatalf("%s\nvs\n%s", menu, b)
 		}
+	}
+}
+
+func TestLinuxVRShortcutLaunchesThroughSteam(t *testing.T) {
+	home := t.TempDir()
+	opts := Options{GOOS: "linux", InstallDir: "/home/me/trinity", Desktop: true, PreferVR: true, AlsoOther: true,
+		AddToSteam: true, SteamRoot: "/home/me/.steam/steam", SteamUser: "/home/me/.steam/steam/userdata/1"}
+	tg := New(opts)
+	tg.home = home
+	if err := tg.desktopFiles(func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	run := fmt.Sprintf("\nExec=xdg-open steam://rungameid/%d\n", steam.GameID64(steam.ShortcutAppID(tg.exe(), "Trinity")))
+	for file, want := range map[string]string{"trinity.desktop": run, "trinity-flat.desktop": "\nExec=/home/me/trinity/trinity +set vr_enabled 0\n"} {
+		if b, err := os.ReadFile(filepath.Join(home, "Desktop", file)); err != nil || !strings.Contains(string(b), want) {
+			t.Fatalf("%s: %s %v", file, b, err)
+		}
+	}
+
+	// Flat preferred alone: the VR entry that opened Steam is Trinity's and goes.
+	opts.PreferVR, opts.AlsoOther = false, false
+	tg = New(opts)
+	tg.home = home
+	os.WriteFile(filepath.Join(home, "Desktop", "trinity-vr.desktop"), []byte("[Desktop Entry]\nType=Application\nName=Trinity (VR)\nExec=xdg-open "+steamRun(tg.exe(), "Trinity (VR)")+"\nPath=/home/me/trinity\n"), 0o755)
+	if err := tg.desktopFiles(func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "Desktop", "trinity-vr.desktop")); err == nil {
+		t.Fatal("the old VR entry opening Trinity's Steam shortcut was left")
+	}
+	if b, _ := os.ReadFile(filepath.Join(home, "Desktop", "trinity.desktop")); !strings.Contains(string(b), "\nExec=/home/me/trinity/trinity +set vr_enabled 0\n") {
+		t.Fatalf("%s", b)
 	}
 }
 
